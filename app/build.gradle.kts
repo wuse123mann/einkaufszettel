@@ -70,4 +70,6 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
+    // Netzwerk-Stack von Chrome (QUIC/HTTP3) über die Google-Play-Dienste
+    implementation("com.google.android.gms:play-services-cronet:18.1.0")
 }

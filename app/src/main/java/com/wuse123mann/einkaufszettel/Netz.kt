@@ -1,6 +1,18 @@
 package com.wuse123mann.einkaufszettel
 
+import android.content.Context
+import com.google.android.gms.net.CronetProviderInstaller
 import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.chromium.net.CronetEngine
+import org.chromium.net.CronetProvider
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.dnsoverhttps.DnsOverHttps
@@ -62,5 +74,112 @@ object RobustDns : Dns {
             }
         }
         throw UnknownHostException("${fehler.message} (auch verschlüsseltes Ausweich-DNS fehlgeschlagen)")
+    }
+}
+
+/**
+ * HTTP-Zugriff: bevorzugt Cronet (der Netzwerk-Stack von Chrome, über die Google-Play-Dienste,
+ * mit QUIC/HTTP3 und parallelen Verbindungsversuchen). Fällt auf OkHttp zurück, wenn Cronet
+ * nicht verfügbar ist oder die Anfrage scheitert.
+ */
+object Http {
+    const val HOST = "generativelanguage.googleapis.com"
+
+    @Volatile private var engine: CronetEngine? = null
+    private val bereit = CountDownLatch(1)
+    private val gestartet = AtomicBoolean(false)
+
+    /** Welcher Weg zuletzt erfolgreich war (für die Anzeige im Schlüssel-Test). */
+    @Volatile var letzterWeg: String = "-"
+        private set
+
+    private val okhttp: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .dns(RobustDns)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
+    }
+    private val JSON_TYP = "application/json; charset=utf-8".toMediaType()
+
+    fun init(context: Context) {
+        if (!gestartet.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        try {
+            CronetProviderInstaller.installProvider(app).addOnCompleteListener {
+                try {
+                    val provider = CronetProvider.getAllProviders(app).firstOrNull {
+                        it.isEnabled && it.name != CronetProvider.PROVIDER_NAME_FALLBACK
+                    }
+                    engine = provider?.createBuilder()
+                        ?.enableQuic(true)
+                        ?.enableHttp2(true)
+                        ?.addQuicHint(HOST, 443, 443)
+                        ?.build()
+                } catch (_: Throwable) {
+                    engine = null
+                }
+                bereit.countDown()
+            }
+        } catch (_: Throwable) {
+            bereit.countDown()
+        }
+    }
+
+    fun get(url: String, apiKey: String): Pair<Int, String> = anfrage(url, apiKey, null)
+    fun post(url: String, apiKey: String, body: String): Pair<Int, String> = anfrage(url, apiKey, body)
+
+    private fun anfrage(url: String, apiKey: String, body: String?): Pair<Int, String> {
+        bereit.await(4, TimeUnit.SECONDS)
+        val e = engine
+        if (e != null) {
+            try {
+                val r = cronet(e, url, apiKey, body)
+                letzterWeg = "Chrome-Netz"
+                return r
+            } catch (cronetFehler: IOException) {
+                try {
+                    val r = ok(url, apiKey, body)
+                    letzterWeg = "OkHttp"
+                    return r
+                } catch (okFehler: IOException) {
+                    cronetFehler.addSuppressed(okFehler)
+                    throw cronetFehler
+                }
+            }
+        }
+        val r = ok(url, apiKey, body)
+        letzterWeg = "OkHttp"
+        return r
+    }
+
+    private fun cronet(e: CronetEngine, url: String, apiKey: String, body: String?): Pair<Int, String> {
+        val con = e.openConnection(URL(url)) as HttpURLConnection
+        try {
+            con.connectTimeout = 20_000
+            con.readTimeout = 90_000
+            con.setRequestProperty("x-goog-api-key", apiKey)
+            if (body != null) {
+                val bytes = body.toByteArray(Charsets.UTF_8)
+                con.requestMethod = "POST"
+                con.doOutput = true
+                con.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                con.setFixedLengthStreamingMode(bytes.size)
+                con.outputStream.use { it.write(bytes) }
+            }
+            val code = con.responseCode
+            val stream = if (code < 400) con.inputStream else con.errorStream
+            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            return code to text
+        } finally {
+            con.disconnect()
+        }
+    }
+
+    private fun ok(url: String, apiKey: String, body: String?): Pair<Int, String> {
+        val b = Request.Builder().url(url).header("x-goog-api-key", apiKey)
+        if (body != null) b.post(body.toRequestBody(JSON_TYP)) else b.get()
+        return okhttp.newCall(b.build()).execute().use { it.code to (it.body?.string() ?: "") }
     }
 }

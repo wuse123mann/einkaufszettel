@@ -12,11 +12,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -96,21 +91,8 @@ Antworte NUR mit JSON in genau diesem Format:
         parseItems(antwort)
     }
 
-    private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .dns(RobustDns)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .build()
-    }
-    private val JSON_TYP = "application/json; charset=utf-8".toMediaType()
-
     private fun url(modell: String, aktion: String) =
         "https://generativelanguage.googleapis.com/v1beta/models/" + URLEncoder.encode(modell, "UTF-8") + aktion
-
-    private fun ausfuehren(req: Request): Pair<Int, String> =
-        client.newCall(req).execute().use { it.code to (it.body?.string() ?: "") }
 
     @Volatile private var gefundeneModelle: List<String>? = null
 
@@ -121,10 +103,7 @@ Antworte NUR mit JSON in genau diesem Format:
     private fun verfuegbareModelle(apiKey: String): List<String> {
         gefundeneModelle?.let { return it }
         return try {
-            val req = Request.Builder()
-                .url("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000")
-                .header("x-goog-api-key", apiKey).get().build()
-            val (code, text) = ausfuehren(req)
+            val (code, text) = Http.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", apiKey)
             if (code !in 200..299) return emptyList()
             val arr = JSONObject(text).optJSONArray("models") ?: return emptyList()
             val ausschluss = listOf("image", "tts", "live", "audio", "embedding", "exp", "robotics", "computer", "transcribe")
@@ -147,17 +126,18 @@ Antworte NUR mit JSON in genau diesem Format:
         }
     }
 
-    private fun modelle(modell: String, apiKey: String): List<String> =
-        (listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL) + verfuegbareModelle(apiKey))
-            .distinct().take(7)
+    private fun modelle(modell: String, apiKey: String): Sequence<String> = sequence {
+        val fest = listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL).distinct()
+        yieldAll(fest)
+        yieldAll(verfuegbareModelle(apiKey).filter { it !in fest })
+    }.take(7)
 
     /** Schneller Test: fragt nur die Modell-Info ab (prüft Verbindung + Schlüssel, ohne KI-Rechenzeit). */
     suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         for (m in modelle(modell, apiKey)) {
-            val req = Request.Builder().url(url(m, "")).header("x-goog-api-key", apiKey).get().build()
-            val (code, text) = ausfuehren(req)
-            if (code in 200..299) return@withContext "Schlüssel funktioniert ✓ (${sekunden(t0)}, Modell $m)"
+            val (code, text) = Http.get(url(m, ""), apiKey)
+            if (code in 200..299) return@withContext "Schlüssel funktioniert ✓ (${sekunden(t0)}, Modell $m, über ${Http.letzterWeg})"
             if (code != 404) fehlerFuerCode(code, text)
         }
         throw RecognitionException("Kein passendes Gemini-Modell gefunden. Trag unter „Gemini-Modell“ z. B. $FALLBACK_MODELL ein.")
@@ -175,12 +155,7 @@ Antworte NUR mit JSON in genau diesem Format:
         for (m in modelle(modell, apiKey)) {
             var versuch = 0
             while (true) {
-                val req = Request.Builder()
-                    .url(url(m, ":generateContent"))
-                    .header("x-goog-api-key", apiKey)
-                    .post(body.toRequestBody(JSON_TYP))
-                    .build()
-                val (code, text) = ausfuehren(req)
+                val (code, text) = Http.post(url(m, ":generateContent"), apiKey, body)
                 when {
                     code in 200..299 -> return antwortText(text)
                     code >= 500 -> {

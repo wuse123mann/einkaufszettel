@@ -66,6 +66,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // alte Kamerafotos aufräumen
         fotoDir.listFiles()?.forEach { it.delete() }
+        Http.init(app)
     }
 
     val geminiAktiv: Boolean get() = !offlineOnly && apiKey.isNotBlank()
