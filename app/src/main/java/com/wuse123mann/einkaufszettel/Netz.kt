@@ -5,7 +5,8 @@ import com.google.android.gms.net.CronetProviderInstaller
 import okhttp3.Dns
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody
+import okio.BufferedSink
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetProvider
 import java.io.IOException
@@ -128,19 +129,20 @@ object Http {
     }
 
     fun get(url: String, apiKey: String): Pair<Int, String> = anfrage(url, apiKey, null)
-    fun post(url: String, apiKey: String, body: String): Pair<Int, String> = anfrage(url, apiKey, body)
+    fun post(url: String, apiKey: String, body: String, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> =
+        anfrage(url, apiKey, body, hochgeladen)
 
-    private fun anfrage(url: String, apiKey: String, body: String?): Pair<Int, String> {
+    private fun anfrage(url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> {
         bereit.await(4, TimeUnit.SECONDS)
         val e = engine
         if (e != null) {
             try {
-                val r = cronet(e, url, apiKey, body)
+                val r = cronet(e, url, apiKey, body, hochgeladen)
                 letzterWeg = "Chrome-Netz"
                 return r
             } catch (cronetFehler: IOException) {
                 try {
-                    val r = ok(url, apiKey, body)
+                    val r = ok(url, apiKey, body, hochgeladen)
                     letzterWeg = "OkHttp"
                     return r
                 } catch (okFehler: IOException) {
@@ -149,12 +151,14 @@ object Http {
                 }
             }
         }
-        val r = ok(url, apiKey, body)
+        val r = ok(url, apiKey, body, hochgeladen)
         letzterWeg = "OkHttp"
         return r
     }
 
-    private fun cronet(e: CronetEngine, url: String, apiKey: String, body: String?): Pair<Int, String> {
+    private const val STUECK = 16 * 1024
+
+    private fun cronet(e: CronetEngine, url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
         val con = e.openConnection(URL(url)) as HttpURLConnection
         try {
             con.connectTimeout = 20_000
@@ -166,7 +170,16 @@ object Http {
                 con.doOutput = true
                 con.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 con.setFixedLengthStreamingMode(bytes.size)
-                con.outputStream.use { it.write(bytes) }
+                con.outputStream.use { out ->
+                    var i = 0
+                    while (i < bytes.size) {
+                        val n = minOf(STUECK, bytes.size - i)
+                        out.write(bytes, i, n)
+                        i += n
+                        hochgeladen?.invoke(i.toFloat() / bytes.size * 0.99f)
+                    }
+                }
+                hochgeladen?.invoke(1f)
             }
             val code = con.responseCode
             val stream = if (code < 400) con.inputStream else con.errorStream
@@ -177,9 +190,25 @@ object Http {
         }
     }
 
-    private fun ok(url: String, apiKey: String, body: String?): Pair<Int, String> {
+    private fun ok(url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
         val b = Request.Builder().url(url).header("x-goog-api-key", apiKey)
-        if (body != null) b.post(body.toRequestBody(JSON_TYP)) else b.get()
+        if (body != null) b.post(FortschrittBody(body.toByteArray(Charsets.UTF_8), hochgeladen)) else b.get()
         return okhttp.newCall(b.build()).execute().use { it.code to (it.body?.string() ?: "") }
+    }
+
+    private class FortschrittBody(private val bytes: ByteArray, private val cb: ((Float) -> Unit)?) : RequestBody() {
+        override fun contentType() = JSON_TYP
+        override fun contentLength() = bytes.size.toLong()
+        override fun writeTo(sink: BufferedSink) {
+            var i = 0
+            while (i < bytes.size) {
+                val n = minOf(STUECK, bytes.size - i)
+                sink.write(bytes, i, n)
+                i += n
+                cb?.invoke(i.toFloat() / bytes.size * 0.99f)
+            }
+            sink.flush()
+            cb?.invoke(1f)
+        }
     }
 }

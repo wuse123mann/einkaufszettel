@@ -23,6 +23,20 @@ data class Erkannt(val name: String, val menge: String, val kat: String, val uns
 
 class RecognitionException(message: String) : Exception(message)
 
+/**
+ * Ein Schritt der Erkennung für den Fortschrittsbalken.
+ * [von]..[bis] ist der Bereich des Balkens (0–1). Ist [anteil] bekannt, steht der Balken genau dort,
+ * sonst läuft er mit der Zeit langsam auf [bis] zu ([tau] = Zeitkonstante in Sekunden).
+ */
+data class Phase(
+    val text: String,
+    val von: Float,
+    val bis: Float,
+    val anteil: Float? = null,
+    val tau: Float = 15f,
+    val seit: Long = System.currentTimeMillis(),
+)
+
 object Bilder {
     /** Lädt ein Bild verkleinert (längste Seite max. [maxSize] px), Drehung laut EXIF wird berücksichtigt. */
     fun load(context: Context, uri: Uri, maxSize: Int): Bitmap {
@@ -69,11 +83,17 @@ Antworte NUR mit JSON in genau diesem Format:
 """.trim()
     }
 
-    suspend fun read(bitmaps: List<Bitmap>, apiKey: String, modell: String): List<Erkannt> = withContext(Dispatchers.IO) {
+    suspend fun read(
+        bitmaps: List<Bitmap>,
+        apiKey: String,
+        modell: String,
+        melden: (Phase) -> Unit = {},
+    ): List<Erkannt> = withContext(Dispatchers.IO) {
         val parts = JSONArray().put(JSONObject().put("text", prompt(bitmaps.size)))
-        for (bmp in bitmaps) {
+        bitmaps.forEachIndexed { i, bmp ->
+            melden(Phase("Bild wird vorbereitet …", 0.05f, 0.12f, i.toFloat() / bitmaps.size))
             val out = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
             parts.put(
                 JSONObject().put(
                     "inline_data",
@@ -82,12 +102,17 @@ Antworte NUR mit JSON in genau diesem Format:
                 )
             )
         }
-        val body = JSONObject()
-            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
-            .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
-            .toString()
-
-        val antwort = anfrage(body, apiKey, modell)
+        fun body(mitThinking: Boolean): String {
+            val cfg = JSONObject().put("responseMimeType", "application/json")
+            // wenig "Nachdenken" = deutlich schnellere Antwort; Abschreiben braucht keins
+            if (mitThinking) cfg.put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
+            return JSONObject()
+                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
+                .put("generationConfig", cfg)
+                .toString()
+        }
+        val antwort = anfrage(body(true), body(false), apiKey, modell, melden)
+        melden(Phase("Liste wird erstellt …", 0.97f, 1f, 1f))
         parseItems(antwort)
     }
 
@@ -148,19 +173,47 @@ Antworte NUR mit JSON in genau diesem Format:
     /**
      * Schickt die Anfrage. Bei Überlastung (5xx) ein weiterer Versuch mit Pause,
      * danach – wie bei 404 oder ausgeschöpftem Kontingent (429) – das nächste verfügbare Modell.
+     * Kennt ein Modell die Thinking-Einstellung nicht, wird ohne sie wiederholt.
      */
-    private fun anfrage(body: String, apiKey: String, modell: String): String {
+    private fun anfrage(
+        bodySchnell: String,
+        bodyNormal: String,
+        apiKey: String,
+        modell: String,
+        melden: (Phase) -> Unit,
+    ): String {
         var ueberlastet = 0
         var kontingent = false
+        var schnell = true
+        var erstes = true
         for (m in modelle(modell, apiKey)) {
             var versuch = 0
             while (true) {
-                val (code, text) = Http.post(url(m, ":generateContent"), apiKey, body)
+                val hochladenText = when {
+                    erstes -> "Wird hochgeladen …"
+                    versuch > 0 -> "Server ausgelastet – neuer Versuch …"
+                    else -> "Weiche auf Modell $m aus …"
+                }
+                erstes = false
+                melden(Phase(hochladenText, 0.12f, 0.30f, 0f))
+                val (code, text) = Http.post(url(m, ":generateContent"), apiKey, if (schnell) bodySchnell else bodyNormal) { anteil ->
+                    if (anteil < 1f) melden(Phase(hochladenText, 0.12f, 0.30f, anteil))
+                    else melden(Phase("KI liest die Handschrift …", 0.30f, 0.95f, null, tau = 15f))
+                }
                 when {
                     code in 200..299 -> return antwortText(text)
+                    code == 400 && schnell && text.contains("thinking", ignoreCase = true) -> {
+                        schnell = false
+                        continue
+                    }
                     code >= 500 -> {
                         ueberlastet = code
-                        if (versuch < 1) { versuch++; Thread.sleep(1500); continue }
+                        if (versuch < 1) {
+                            versuch++
+                            melden(Phase("Server ausgelastet – kurz warten …", 0.12f, 0.30f, 0f))
+                            Thread.sleep(1500)
+                            continue
+                        }
                     }
                     code == 429 -> kontingent = true
                     code == 404 -> Unit
@@ -268,11 +321,12 @@ object OfflineLeser {
     private val AUFZAEHLUNG = Regex("^\\s*(?:[-•*·–—>]+|\\d+[.)])\\s*")
     private val TRENNER = Regex("\\s*(?:,|\\+|;)\\s*")
 
-    suspend fun read(bitmaps: List<Bitmap>): List<Erkannt> {
+    suspend fun read(bitmaps: List<Bitmap>, melden: (Phase) -> Unit = {}): List<Erkannt> {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         try {
             val out = ArrayList<Erkannt>()
-            for (bmp in bitmaps) {
+            for ((index, bmp) in bitmaps.withIndex()) {
+                melden(Phase("Text wird erkannt (${index + 1}/${bitmaps.size}) …", 0.12f, 0.95f, index.toFloat() / bitmaps.size))
                 val text: Text = suspendCancellableCoroutine { cont ->
                     recognizer.process(InputImage.fromBitmap(bmp, 0))
                         .addOnSuccessListener { cont.resume(it) }

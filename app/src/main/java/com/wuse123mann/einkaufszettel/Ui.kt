@@ -56,7 +56,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.exp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 
 @Composable
 fun App(vm: MainViewModel) {
@@ -439,7 +443,7 @@ fun ScanSheet(vm: MainViewModel, onSettings: () -> Unit) {
                 .padding(start = 18.dp, end = 18.dp, bottom = 16.dp),
         ) {
             when (s) {
-                is ScanState.Loading -> LadeInhalt(s, onCancel = { vm.closeScan() })
+                is ScanState.Loading -> LadeInhalt(s, vm.phase, vm.scanStart, onCancel = { vm.closeScan() })
                 is ScanState.Review -> ReviewInhalt(s, vm, onSettings)
                 is ScanState.Fehler -> FehlerInhalt(s, onClose = { vm.closeScan() }, onSettings = onSettings)
                 ScanState.Idle -> Unit
@@ -467,7 +471,25 @@ private fun Vorschau(thumbs: List<ImageBitmap>, hoehe: Int) {
 }
 
 @Composable
-private fun ColumnScope.LadeInhalt(s: ScanState.Loading, onCancel: () -> Unit) {
+private fun ColumnScope.LadeInhalt(s: ScanState.Loading, phase: Phase?, start: Long, onCancel: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    var jetzt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            jetzt = System.currentTimeMillis()
+            delay(100)
+        }
+    }
+    // Zielwert: genauer Anteil, falls bekannt – sonst langsam mit der Zeit Richtung Phasenende
+    val ziel = phase?.let { p ->
+        val a = p.anteil ?: (1f - exp(-((jetzt - p.seit) / 1000f) / p.tau))
+        p.von + (p.bis - p.von) * a.coerceIn(0f, 1f)
+    } ?: 0f
+    val hoechster = remember { FloatArray(1) }   // Balken läuft nie rückwärts
+    hoechster[0] = maxOf(hoechster[0], ziel)
+    val angezeigt by animateFloatAsState(hoechster[0], animationSpec = tween(300), label = "fortschritt")
+    val sekunden = ((jetzt - start).coerceAtLeast(0) / 1000)
+
     Text(
         if (s.anzahl > 1) "${s.anzahl} Bilder werden gelesen" else "Zettel wird gelesen",
         style = MaterialTheme.typography.titleLarge,
@@ -475,17 +497,34 @@ private fun ColumnScope.LadeInhalt(s: ScanState.Loading, onCancel: () -> Unit) {
     )
     Spacer(Modifier.height(12.dp))
     Vorschau(s.thumbs, 160)
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 22.dp),
-    ) {
-        CircularProgressIndicator()
-        Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(22.dp))
+    LinearProgressIndicator(
+        progress = { angezeigt },
+        modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(10.dp)),
+        trackColor = cs.outlineVariant,
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (s.gemini) "Handschrift wird entziffert …" else "Offline-Erkennung läuft …",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            phase?.text ?: "Wird vorbereitet …",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${(angezeigt * 100).toInt()} % · $sekunden s",
+            style = MaterialTheme.typography.bodySmall,
+            color = cs.onSurfaceVariant,
         )
     }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        if (s.gemini) "Die Dauer hängt davon ab, wie ausgelastet Googles Server gerade sind."
+        else "Die Offline-Erkennung läuft direkt am Handy.",
+        style = MaterialTheme.typography.bodySmall,
+        color = cs.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(18.dp))
     OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Abbrechen") }
 }
 

@@ -2,6 +2,8 @@ package com.wuse123mann.einkaufszettel
 
 import android.app.Application
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -60,6 +62,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var testLaeuft by mutableStateOf(false)
         private set
+
+    /** Aktueller Schritt der Erkennung (für den Fortschrittsbalken). */
+    var phase by mutableStateOf<Phase?>(null)
+        private set
+    var scanStart by mutableStateOf(0L)
+        private set
+    private val main = Handler(Looper.getMainLooper())
+    private fun melden(p: Phase) {
+        main.post { if (scan is ScanState.Loading) phase = p }
+    }
 
     private var scanJob: Job? = null
 
@@ -140,14 +152,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = modell
         scanJob = viewModelScope.launch {
             scan = ScanState.Loading(liste.size, emptyList(), gemini)
+            scanStart = System.currentTimeMillis()
+            phase = Phase("Bild wird geladen …", 0f, 0.05f, 0f)
             var t0 = System.currentTimeMillis()
             try {
                 val ctx = getApplication<Application>()
-                val bitmaps = withContext(Dispatchers.IO) { liste.map { Bilder.load(ctx, it, 1800) } }
+                val bitmaps = withContext(Dispatchers.IO) { liste.map { Bilder.load(ctx, it, 1600) } }
                 val thumbs = withContext(Dispatchers.Default) { bitmaps.map { Bilder.thumb(it).asImageBitmap() } }
                 scan = ScanState.Loading(liste.size, thumbs, gemini)
                 t0 = System.currentTimeMillis()
-                val erkannt = if (gemini) Gemini.read(bitmaps, key, m) else OfflineLeser.read(bitmaps)
+                val erkannt = if (gemini) Gemini.read(bitmaps, key, m, ::melden) else OfflineLeser.read(bitmaps, ::melden)
                 scan = if (erkannt.isEmpty()) {
                     ScanState.Fehler("Auf dem Bild wurde kein Text gefunden. Achte auf gutes Licht und fotografier den Zettel möglichst gerade von oben.")
                 } else {
