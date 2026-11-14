@@ -126,7 +126,35 @@ Antworte NUR mit JSON in genau diesem Format:
         throw letzter ?: RecognitionException("Unbekannter Fehler bei der Erkennung.")
     }
 
+    /** Verständliche Erklärung eines Netzwerkfehlers, inkl. technischem Grund zur Fehlersuche. */
+    fun netzFehlerText(e: java.io.IOException): String {
+        val grund = when (e) {
+            is java.net.UnknownHostException ->
+                "Der Gemini-Server wurde nicht gefunden. Prüfe, ob die App mobile Daten/WLAN nutzen darf (Einstellungen → Apps → Einkaufszettel → Mobile Daten) und ob ein Werbeblocker oder „Privates DNS“ googleapis.com sperrt."
+            is java.net.SocketTimeoutException ->
+                "Der Server hat nicht rechtzeitig geantwortet. Bei schwachem Empfang bitte erneut versuchen."
+            is javax.net.ssl.SSLException ->
+                "Die sichere Verbindung ist fehlgeschlagen. Stimmen Datum und Uhrzeit am Handy? Läuft ein VPN oder Werbeblocker?"
+            is java.net.ConnectException ->
+                "Die Verbindung wurde abgelehnt. Läuft ein VPN, eine Firewall oder ein Werbeblocker?"
+            else -> "Keine Verbindung zum Server."
+        }
+        return "$grund\n\nTechnisch: ${e.javaClass.simpleName}: ${e.message ?: "-"}"
+    }
+
     private fun post(modell: String, apiKey: String, body: String): Pair<Int, String> {
+        // Ein Wiederholungsversuch bei kurzzeitigen Netzproblemen
+        return try {
+            postEinmal(modell, apiKey, body)
+        } catch (e: java.net.UnknownHostException) {
+            throw e
+        } catch (e: java.io.IOException) {
+            Thread.sleep(1200)
+            postEinmal(modell, apiKey, body)
+        }
+    }
+
+    private fun postEinmal(modell: String, apiKey: String, body: String): Pair<Int, String> {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/" +
             URLEncoder.encode(modell, "UTF-8") + ":generateContent")
         val con = url.openConnection() as HttpURLConnection

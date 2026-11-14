@@ -160,7 +160,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 scan = ScanState.Fehler(e.message ?: "Unbekannter Fehler")
             } catch (e: IOException) {
                 scan = ScanState.Fehler(
-                    if (gemini) "Keine Verbindung zum Server. Prüfe dein Internet – oder schalte in den Einstellungen auf Offline-Erkennung."
+                    if (gemini) Gemini.netzFehlerText(e)
                     else "Das Bild konnte nicht geöffnet werden (${e.message})."
                 )
             } catch (e: Exception) {
@@ -211,7 +211,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: RecognitionException) {
                 e.message
             } catch (e: IOException) {
-                "Keine Verbindung zum Server."
+                Gemini.netzFehlerText(e)
             } catch (e: Exception) {
                 "Fehler: ${e.message}"
             }
