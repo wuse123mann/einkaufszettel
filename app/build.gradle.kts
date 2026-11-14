@@ -16,6 +16,8 @@ android {
         targetSdk = 35
         versionCode = buildNummer
         versionName = "1.0.$buildNummer"
+        // nur Handy-Prozessoren: halbiert die APK-Größe (Offline-Texterkennung)
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
