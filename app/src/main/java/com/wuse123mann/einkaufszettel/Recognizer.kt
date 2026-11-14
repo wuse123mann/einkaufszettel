@@ -52,7 +52,7 @@ object Bilder {
 
 /** Handschrifterkennung über die Gemini-API (Gratis-Tarif, Schlüssel aus Google AI Studio). */
 object Gemini {
-    private const val FALLBACK_MODELL = "gemini-2.5-flash"
+    private const val FALLBACK_MODELL = "gemini-flash-lite-latest"
 
     private fun prompt(anzahl: Int): String {
         val start = if (anzahl > 1)
@@ -89,7 +89,7 @@ Antworte NUR mit JSON in genau diesem Format:
         }
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
-            .put("generationConfig", JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json"))
+            .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
             .toString()
 
         val antwort = anfrage(body, apiKey, modell)
@@ -111,13 +111,49 @@ Antworte NUR mit JSON in genau diesem Format:
     private fun ausfuehren(req: Request): Pair<Int, String> =
         client.newCall(req).execute().use { it.code to (it.body?.string() ?: "") }
 
-    private fun modelle(modell: String) =
-        listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL, "gemini-2.5-flash-lite").distinct()
+    @Volatile private var gefundeneModelle: List<String>? = null
+
+    private fun versionsNummer(name: String): Double =
+        Regex("gemini-(\\d+(?:\\.\\d+)?)").find(name)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
+
+    /** Fragt bei Google ab, welche Flash-Modelle mit diesem Schlüssel verfügbar sind (neueste zuerst). */
+    private fun verfuegbareModelle(apiKey: String): List<String> {
+        gefundeneModelle?.let { return it }
+        return try {
+            val req = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000")
+                .header("x-goog-api-key", apiKey).get().build()
+            val (code, text) = ausfuehren(req)
+            if (code !in 200..299) return emptyList()
+            val arr = JSONObject(text).optJSONArray("models") ?: return emptyList()
+            val ausschluss = listOf("image", "tts", "live", "audio", "embedding", "exp", "robotics", "computer", "transcribe")
+            val liste = ArrayList<String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val name = o.optString("name").removePrefix("models/")
+                val methoden = o.optJSONArray("supportedGenerationMethods")?.toString().orEmpty()
+                if (!methoden.contains("generateContent")) continue
+                if (!name.contains("flash") || ausschluss.any { name.contains(it) }) continue
+                liste += name
+            }
+            val sortiert = liste.sortedWith(
+                compareBy<String>({ it.contains("preview") }, { -versionsNummer(it) }, { it.contains("lite") }, { it.length })
+            ).take(5)
+            gefundeneModelle = sortiert
+            sortiert
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun modelle(modell: String, apiKey: String): List<String> =
+        (listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL) + verfuegbareModelle(apiKey))
+            .distinct().take(7)
 
     /** Schneller Test: fragt nur die Modell-Info ab (prüft Verbindung + Schlüssel, ohne KI-Rechenzeit). */
     suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
-        for (m in modelle(modell)) {
+        for (m in modelle(modell, apiKey)) {
             val req = Request.Builder().url(url(m, "")).header("x-goog-api-key", apiKey).get().build()
             val (code, text) = ausfuehren(req)
             if (code in 200..299) return@withContext "Schlüssel funktioniert ✓ (${sekunden(t0)}, Modell $m)"
@@ -129,13 +165,13 @@ Antworte NUR mit JSON in genau diesem Format:
     fun sekunden(t0: Long): String = String.format(java.util.Locale.GERMAN, "%.1f s", (System.currentTimeMillis() - t0) / 1000.0)
 
     /**
-     * Schickt die Anfrage. Bei Überlastung (5xx) zwei weitere Versuche mit Pause,
-     * danach – wie bei 404 oder ausgeschöpftem Kontingent (429) – das nächste Gratis-Modell.
+     * Schickt die Anfrage. Bei Überlastung (5xx) ein weiterer Versuch mit Pause,
+     * danach – wie bei 404 oder ausgeschöpftem Kontingent (429) – das nächste verfügbare Modell.
      */
     private fun anfrage(body: String, apiKey: String, modell: String): String {
-        var letzterCode = 0
-        var letzterText = ""
-        for (m in modelle(modell)) {
+        var ueberlastet = 0
+        var kontingent = false
+        for (m in modelle(modell, apiKey)) {
             var versuch = 0
             while (true) {
                 val req = Request.Builder()
@@ -144,22 +180,24 @@ Antworte NUR mit JSON in genau diesem Format:
                     .post(body.toRequestBody(JSON_TYP))
                     .build()
                 val (code, text) = ausfuehren(req)
-                if (code in 200..299) return antwortText(text)
-                letzterCode = code
-                letzterText = text
-                if (code >= 500 && versuch < 2) {
-                    versuch++
-                    Thread.sleep(1500L * versuch)
-                    continue
+                when {
+                    code in 200..299 -> return antwortText(text)
+                    code >= 500 -> {
+                        ueberlastet = code
+                        if (versuch < 1) { versuch++; Thread.sleep(1500); continue }
+                    }
+                    code == 429 -> kontingent = true
+                    code == 404 -> Unit
+                    else -> fehlerFuerCode(code, text)
                 }
                 break
             }
-            // nächstes Modell probieren?
-            if (letzterCode == 404 || letzterCode == 429 || letzterCode >= 500) continue
-            fehlerFuerCode(letzterCode, letzterText)
         }
-        if (letzterCode == 404) throw RecognitionException("Kein passendes Gemini-Modell gefunden. Trag unter „Gemini-Modell“ z. B. $FALLBACK_MODELL ein.")
-        fehlerFuerCode(letzterCode, letzterText)
+        when {
+            ueberlastet > 0 -> fehlerFuerCode(ueberlastet, "")
+            kontingent -> fehlerFuerCode(429, "")
+            else -> throw RecognitionException("Kein passendes Gemini-Modell gefunden. Bitte unter „Gemini-Modell“ den Standard $STANDARD_MODELL eintragen.")
+        }
     }
 
     private fun fehlerFuerCode(code: Int, text: String): Nothing = when {
