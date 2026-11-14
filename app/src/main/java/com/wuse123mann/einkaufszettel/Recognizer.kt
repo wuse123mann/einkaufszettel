@@ -98,6 +98,7 @@ Antworte NUR mit JSON in genau diesem Format:
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .dns(RobustDns)
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
@@ -218,7 +219,7 @@ Antworte NUR mit JSON in genau diesem Format:
     fun netzFehlerText(e: java.io.IOException, dauer: String? = null): String {
         val grund = when (e) {
             is java.net.UnknownHostException ->
-                "Der Gemini-Server wurde nicht gefunden. Prüfe, ob die App mobile Daten/WLAN nutzen darf und ob ein Werbeblocker oder „Privates DNS“ googleapis.com sperrt."
+                "Die Adresse des Gemini-Servers konnte nicht ermittelt werden – auch nicht über das Ausweich-DNS. Meist blockiert dann etwas am Handy die App: Werbeblocker/Firewall-App, VPN, „Privates DNS“ (Einstellungen → Netzwerk) oder gesperrte Datennutzung für die App."
             is java.net.SocketTimeoutException ->
                 "Der Server hat nicht rechtzeitig geantwortet. Läuft ein VPN, Werbeblocker oder eine Firewall-App? Sonst bitte im WLAN erneut versuchen."
             is javax.net.ssl.SSLException ->

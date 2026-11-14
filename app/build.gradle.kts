@@ -69,4 +69,5 @@ dependencies {
     // Offline-Texterkennung (läuft komplett am Handy, kein Konto nötig)
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 }
