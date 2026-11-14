@@ -139,11 +139,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = modell
         scanJob = viewModelScope.launch {
             scan = ScanState.Loading(liste.size, emptyList(), gemini)
+            var t0 = System.currentTimeMillis()
             try {
                 val ctx = getApplication<Application>()
                 val bitmaps = withContext(Dispatchers.IO) { liste.map { Bilder.load(ctx, it, 1800) } }
                 val thumbs = withContext(Dispatchers.Default) { bitmaps.map { Bilder.thumb(it).asImageBitmap() } }
                 scan = ScanState.Loading(liste.size, thumbs, gemini)
+                t0 = System.currentTimeMillis()
                 val erkannt = if (gemini) Gemini.read(bitmaps, key, m) else OfflineLeser.read(bitmaps)
                 scan = if (erkannt.isEmpty()) {
                     ScanState.Fehler("Auf dem Bild wurde kein Text gefunden. Achte auf gutes Licht und fotografier den Zettel möglichst gerade von oben.")
@@ -160,7 +162,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 scan = ScanState.Fehler(e.message ?: "Unbekannter Fehler")
             } catch (e: IOException) {
                 scan = ScanState.Fehler(
-                    if (gemini) Gemini.netzFehlerText(e)
+                    if (gemini) Gemini.netzFehlerText(e, Gemini.sekunden(t0))
                     else "Das Bild konnte nicht geöffnet werden (${e.message})."
                 )
             } catch (e: Exception) {
@@ -206,12 +208,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         testLaeuft = true
         testErgebnis = null
         viewModelScope.launch {
+            val t0 = System.currentTimeMillis()
             testErgebnis = try {
                 Gemini.test(apiKey, modell.ifBlank { STANDARD_MODELL })
             } catch (e: RecognitionException) {
                 e.message
             } catch (e: IOException) {
-                Gemini.netzFehlerText(e)
+                Gemini.netzFehlerText(e, Gemini.sekunden(t0))
             } catch (e: Exception) {
                 "Fehler: ${e.message}"
             }

@@ -12,11 +12,14 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -93,86 +96,83 @@ Antworte NUR mit JSON in genau diesem Format:
         parseItems(antwort)
     }
 
-    /** Kleiner Test, ob Schlüssel und Modell funktionieren. */
-    suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("contents", JSONArray().put(JSONObject().put("role", "user")
-                .put("parts", JSONArray().put(JSONObject().put("text", "Antworte nur mit: OK")))))
-            .toString()
-        anfrage(body, apiKey, modell)
-        "Schlüssel funktioniert ✓"
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
     }
+    private val JSON_TYP = "application/json; charset=utf-8".toMediaType()
+
+    private fun url(modell: String, aktion: String) =
+        "https://generativelanguage.googleapis.com/v1beta/models/" + URLEncoder.encode(modell, "UTF-8") + aktion
+
+    private fun ausfuehren(req: Request): Pair<Int, String> =
+        client.newCall(req).execute().use { it.code to (it.body?.string() ?: "") }
+
+    private fun modelle(modell: String) = listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL).distinct()
+
+    /** Schneller Test: fragt nur die Modell-Info ab (prüft Verbindung + Schlüssel, ohne KI-Rechenzeit). */
+    suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
+        val t0 = System.currentTimeMillis()
+        for (m in modelle(modell)) {
+            val req = Request.Builder().url(url(m, "")).header("x-goog-api-key", apiKey).get().build()
+            val (code, text) = ausfuehren(req)
+            if (code in 200..299) return@withContext "Schlüssel funktioniert ✓ (${sekunden(t0)}, Modell $m)"
+            if (code != 404) fehlerFuerCode(code, text)
+        }
+        throw RecognitionException("Kein passendes Gemini-Modell gefunden. Trag unter „Gemini-Modell“ z. B. $FALLBACK_MODELL ein.")
+    }
+
+    fun sekunden(t0: Long): String = String.format(java.util.Locale.GERMAN, "%.1f s", (System.currentTimeMillis() - t0) / 1000.0)
 
     /** Schickt die Anfrage; fällt bei unbekanntem Modell auf ein Standardmodell zurück. Liefert den Antworttext. */
     private fun anfrage(body: String, apiKey: String, modell: String): String {
-        val modelle = listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL).distinct()
         var letzter: RecognitionException? = null
-        for (m in modelle) {
-            val (code, text) = post(m, apiKey, body)
-            when {
-                code in 200..299 -> return antwortText(text)
-                code == 404 -> letzter = RecognitionException("Modell „$m“ wurde nicht gefunden.")
-                code == 400 && text.contains("API_KEY_INVALID") ->
-                    throw RecognitionException("Der API-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.")
-                code == 401 || code == 403 ->
-                    throw RecognitionException("Der API-Schlüssel wurde abgelehnt (${fehlertext(text)}). Bitte in den Einstellungen prüfen.")
-                code == 429 ->
-                    throw RecognitionException("Das Gratis-Kontingent ist gerade aufgebraucht. Warte eine Minute und versuch es erneut – oder nutze die Offline-Erkennung.")
-                code >= 500 ->
-                    throw RecognitionException("Der Gemini-Server ist gerade überlastet ($code). Bitte gleich noch einmal versuchen.")
-                else -> throw RecognitionException("Fehler $code: ${fehlertext(text)}")
-            }
+        for (m in modelle(modell)) {
+            val req = Request.Builder()
+                .url(url(m, ":generateContent"))
+                .header("x-goog-api-key", apiKey)
+                .post(body.toRequestBody(JSON_TYP))
+                .build()
+            val (code, text) = ausfuehren(req)
+            if (code in 200..299) return antwortText(text)
+            if (code == 404) { letzter = RecognitionException("Modell „$m“ wurde nicht gefunden."); continue }
+            fehlerFuerCode(code, text)
         }
         throw letzter ?: RecognitionException("Unbekannter Fehler bei der Erkennung.")
     }
 
+    private fun fehlerFuerCode(code: Int, text: String): Nothing = when {
+        code == 400 && text.contains("API_KEY_INVALID") ->
+            throw RecognitionException("Der API-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.")
+        code == 400 && text.contains("location", ignoreCase = true) ->
+            throw RecognitionException("Gemini ist von deinem Standort aus nicht verfügbar: ${fehlertext(text)}")
+        code == 401 || code == 403 ->
+            throw RecognitionException("Der API-Schlüssel wurde abgelehnt (${fehlertext(text)}). Bitte in den Einstellungen prüfen.")
+        code == 429 ->
+            throw RecognitionException("Das Gratis-Kontingent ist gerade aufgebraucht. Warte eine Minute und versuch es erneut – oder nutze die Offline-Erkennung.")
+        code >= 500 ->
+            throw RecognitionException("Der Gemini-Server ist gerade überlastet ($code). Bitte gleich noch einmal versuchen.")
+        else -> throw RecognitionException("Fehler $code: ${fehlertext(text)}")
+    }
+
     /** Verständliche Erklärung eines Netzwerkfehlers, inkl. technischem Grund zur Fehlersuche. */
-    fun netzFehlerText(e: java.io.IOException): String {
+    fun netzFehlerText(e: java.io.IOException, dauer: String? = null): String {
         val grund = when (e) {
             is java.net.UnknownHostException ->
-                "Der Gemini-Server wurde nicht gefunden. Prüfe, ob die App mobile Daten/WLAN nutzen darf (Einstellungen → Apps → Einkaufszettel → Mobile Daten) und ob ein Werbeblocker oder „Privates DNS“ googleapis.com sperrt."
+                "Der Gemini-Server wurde nicht gefunden. Prüfe, ob die App mobile Daten/WLAN nutzen darf und ob ein Werbeblocker oder „Privates DNS“ googleapis.com sperrt."
             is java.net.SocketTimeoutException ->
-                "Der Server hat nicht rechtzeitig geantwortet. Bei schwachem Empfang bitte erneut versuchen."
+                "Der Server hat nicht rechtzeitig geantwortet. Läuft ein VPN, Werbeblocker oder eine Firewall-App? Sonst bitte im WLAN erneut versuchen."
             is javax.net.ssl.SSLException ->
                 "Die sichere Verbindung ist fehlgeschlagen. Stimmen Datum und Uhrzeit am Handy? Läuft ein VPN oder Werbeblocker?"
             is java.net.ConnectException ->
                 "Die Verbindung wurde abgelehnt. Läuft ein VPN, eine Firewall oder ein Werbeblocker?"
             else -> "Keine Verbindung zum Server."
         }
-        return "$grund\n\nTechnisch: ${e.javaClass.simpleName}: ${e.message ?: "-"}"
-    }
-
-    private fun post(modell: String, apiKey: String, body: String): Pair<Int, String> {
-        // Ein Wiederholungsversuch bei kurzzeitigen Netzproblemen
-        return try {
-            postEinmal(modell, apiKey, body)
-        } catch (e: java.net.UnknownHostException) {
-            throw e
-        } catch (e: java.io.IOException) {
-            Thread.sleep(1200)
-            postEinmal(modell, apiKey, body)
-        }
-    }
-
-    private fun postEinmal(modell: String, apiKey: String, body: String): Pair<Int, String> {
-        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/" +
-            URLEncoder.encode(modell, "UTF-8") + ":generateContent")
-        val con = url.openConnection() as HttpURLConnection
-        try {
-            con.requestMethod = "POST"
-            con.connectTimeout = 20_000
-            con.readTimeout = 120_000
-            con.doOutput = true
-            con.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            con.setRequestProperty("x-goog-api-key", apiKey)
-            con.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = con.responseCode
-            val stream = if (code < 400) con.inputStream else con.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            return code to text
-        } finally {
-            con.disconnect()
-        }
+        val zeit = if (dauer != null) " nach $dauer" else ""
+        return "$grund\n\nTechnisch$zeit: ${e.javaClass.simpleName}: ${e.message ?: "-"}"
     }
 
     private fun fehlertext(text: String): String = try {
