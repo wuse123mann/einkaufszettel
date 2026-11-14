@@ -70,7 +70,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val geminiAktiv: Boolean get() = !offlineOnly && apiKey.isNotBlank()
 
-    private fun setItems(neu: List<Item>) {
+    private fun speichern(neu: List<Item>) {
         items = neu
         viewModelScope.launch(Dispatchers.IO) {
             saveLock.withLock { store.save(neu) }
@@ -78,13 +78,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- Liste ----------
-    fun toggle(id: String) = setItems(items.map {
+    fun toggle(id: String) = speichern(items.map {
         if (it.id == id) it.copy(done = !it.done, unsicher = if (!it.done) false else it.unsicher) else it
     })
 
     fun delete(item: Item): Int {
         val index = items.indexOfFirst { it.id == item.id }
-        setItems(items.filterNot { it.id == item.id })
+        speichern(items.filterNot { it.id == item.id })
         return index
     }
 
@@ -92,11 +92,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (items.any { it.id == item.id }) return
         val l = items.toMutableList()
         l.add(index.coerceIn(0, l.size), item)
-        setItems(l)
+        speichern(l)
     }
 
-    fun clearDone() = setItems(items.filterNot { it.done })
-    fun clearAll() = setItems(emptyList())
+    fun clearDone() = speichern(items.filterNot { it.done })
+    fun clearAll() = speichern(emptyList())
 
     fun addManual(text: String) {
         val t = text.trim()
@@ -107,7 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             meldung = "„$schoen“ steht schon auf der Liste"
             return
         }
-        setItems(items + Item(name = schoen, menge = menge, kat = guessKat(schoen)))
+        speichern(items + Item(name = schoen, menge = menge, kat = guessKat(schoen)))
     }
 
     fun shareText(): String {
@@ -185,7 +185,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (!vorhanden.add(name.lowercase())) { doppelt++; continue }
             neu += Item(name = name, menge = r.menge.trim(), kat = r.kat, unsicher = r.unsicher)
         }
-        setItems(items + neu)
+        speichern(items + neu)
         scan = ScanState.Idle
         meldung = "${neu.size} Artikel hinzugefügt" + if (doppelt > 0) " · $doppelt waren schon drauf" else ""
     }
