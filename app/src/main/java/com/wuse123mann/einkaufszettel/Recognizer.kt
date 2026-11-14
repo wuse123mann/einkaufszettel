@@ -111,7 +111,8 @@ Antworte NUR mit JSON in genau diesem Format:
     private fun ausfuehren(req: Request): Pair<Int, String> =
         client.newCall(req).execute().use { it.code to (it.body?.string() ?: "") }
 
-    private fun modelle(modell: String) = listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL).distinct()
+    private fun modelle(modell: String) =
+        listOf(modell.trim().ifBlank { STANDARD_MODELL }, STANDARD_MODELL, FALLBACK_MODELL, "gemini-2.5-flash-lite").distinct()
 
     /** Schneller Test: fragt nur die Modell-Info ab (prüft Verbindung + Schlüssel, ohne KI-Rechenzeit). */
     suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
@@ -127,21 +128,38 @@ Antworte NUR mit JSON in genau diesem Format:
 
     fun sekunden(t0: Long): String = String.format(java.util.Locale.GERMAN, "%.1f s", (System.currentTimeMillis() - t0) / 1000.0)
 
-    /** Schickt die Anfrage; fällt bei unbekanntem Modell auf ein Standardmodell zurück. Liefert den Antworttext. */
+    /**
+     * Schickt die Anfrage. Bei Überlastung (5xx) zwei weitere Versuche mit Pause,
+     * danach – wie bei 404 oder ausgeschöpftem Kontingent (429) – das nächste Gratis-Modell.
+     */
     private fun anfrage(body: String, apiKey: String, modell: String): String {
-        var letzter: RecognitionException? = null
+        var letzterCode = 0
+        var letzterText = ""
         for (m in modelle(modell)) {
-            val req = Request.Builder()
-                .url(url(m, ":generateContent"))
-                .header("x-goog-api-key", apiKey)
-                .post(body.toRequestBody(JSON_TYP))
-                .build()
-            val (code, text) = ausfuehren(req)
-            if (code in 200..299) return antwortText(text)
-            if (code == 404) { letzter = RecognitionException("Modell „$m“ wurde nicht gefunden."); continue }
-            fehlerFuerCode(code, text)
+            var versuch = 0
+            while (true) {
+                val req = Request.Builder()
+                    .url(url(m, ":generateContent"))
+                    .header("x-goog-api-key", apiKey)
+                    .post(body.toRequestBody(JSON_TYP))
+                    .build()
+                val (code, text) = ausfuehren(req)
+                if (code in 200..299) return antwortText(text)
+                letzterCode = code
+                letzterText = text
+                if (code >= 500 && versuch < 2) {
+                    versuch++
+                    Thread.sleep(1500L * versuch)
+                    continue
+                }
+                break
+            }
+            // nächstes Modell probieren?
+            if (letzterCode == 404 || letzterCode == 429 || letzterCode >= 500) continue
+            fehlerFuerCode(letzterCode, letzterText)
         }
-        throw letzter ?: RecognitionException("Unbekannter Fehler bei der Erkennung.")
+        if (letzterCode == 404) throw RecognitionException("Kein passendes Gemini-Modell gefunden. Trag unter „Gemini-Modell“ z. B. $FALLBACK_MODELL ein.")
+        fehlerFuerCode(letzterCode, letzterText)
     }
 
     private fun fehlerFuerCode(code: Int, text: String): Nothing = when {
@@ -152,9 +170,9 @@ Antworte NUR mit JSON in genau diesem Format:
         code == 401 || code == 403 ->
             throw RecognitionException("Der API-Schlüssel wurde abgelehnt (${fehlertext(text)}). Bitte in den Einstellungen prüfen.")
         code == 429 ->
-            throw RecognitionException("Das Gratis-Kontingent ist gerade aufgebraucht. Warte eine Minute und versuch es erneut – oder nutze die Offline-Erkennung.")
+            throw RecognitionException("Das Gratis-Kontingent ist gerade aufgebraucht (bei allen Modellen). Warte eine Minute und versuch es erneut – oder nutze die Offline-Erkennung.")
         code >= 500 ->
-            throw RecognitionException("Der Gemini-Server ist gerade überlastet ($code). Bitte gleich noch einmal versuchen.")
+            throw RecognitionException("Alle Gemini-Modelle sind gerade überlastet ($code). Bitte in ein paar Minuten noch einmal versuchen – oder vorübergehend die Offline-Erkennung nutzen.")
         else -> throw RecognitionException("Fehler $code: ${fehlertext(text)}")
     }
 
