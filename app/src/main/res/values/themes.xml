@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="hintergrund">#F6F3EC</color>
+    <color name="icon_hintergrund">#2F7D55</color>
+    <style name="Theme.Einkaufszettel" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/hintergrund</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
