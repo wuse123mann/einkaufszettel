@@ -206,7 +206,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                     modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 12.dp),
                 )
             }
-            if (!vm.geminiAktiv && !vm.offlineOnly) {
+            if (!vm.gewaehlterBereit) {
                 item(key = "tipp") {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -215,7 +215,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                     ) {
                         Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 4.dp)) {
                             Text(
-                                "Tipp: Mit einem kostenlosen Gemini-Schlüssel liest die App Handschrift viel zuverlässiger. Ohne Schlüssel wird offline am Handy gelesen – das klappt bei Handschrift oft nur mäßig.",
+                                "Tipp: Mit einem kostenlosen Groq- oder Gemini-Schlüssel liest die App Handschrift viel zuverlässiger. Ohne Schlüssel wird offline am Handy gelesen – das klappt bei Handschrift oft nur mäßig.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -544,7 +544,7 @@ private fun ColumnScope.ReviewInhalt(s: ScanState.Review, vm: MainViewModel, onS
         Surface(shape = RoundedCornerShape(12.dp), color = cs.tertiaryContainer, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
                 Text(
-                    "Offline erkannt – bei Handschrift oft ungenau. Mit einem Gratis-Gemini-Schlüssel wird's viel besser.",
+                    "Offline erkannt – bei Handschrift oft ungenau. Mit einem Gratis-Schlüssel (Groq oder Gemini) wird's viel besser.",
                     style = MaterialTheme.typography.bodySmall,
                     color = cs.onTertiaryContainer,
                     modifier = Modifier.weight(1f),
@@ -638,7 +638,8 @@ private fun ColumnScope.FehlerInhalt(s: ScanState.Fehler, onClose: () -> Unit, o
 fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     val cs = MaterialTheme.colorScheme
-    var zeigen by remember { mutableStateOf(false) }
+    var groqKeyText by rememberSaveable { mutableStateOf(vm.groqKey) }
+    var groqModellText by rememberSaveable { mutableStateOf(vm.groqModell) }
     var keyText by rememberSaveable { mutableStateOf(vm.apiKey) }
     var modellText by rememberSaveable { mutableStateOf(vm.modell) }
 
@@ -663,12 +664,49 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                 .padding(16.dp),
         ) {
             Text("Handschrifterkennung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
-                "Am zuverlässigsten liest die App Handschrift mit Googles KI Gemini. Der Gratis-Tarif reicht für Einkaufszettel locker und braucht keine Kreditkarte.",
+                "Wähle, wer deine Zettel liest. Beide Online-Dienste sind im Gratis-Tarif ohne Kreditkarte nutzbar.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Spacer(Modifier.height(10.dp))
+            Karte {
+                DienstOption("Groq", "Sehr schnell (meist wenige Sekunden).", vm.dienst == Dienst.GROQ) { vm.updateDienst(Dienst.GROQ) }
+                HorizontalDivider(color = cs.outlineVariant)
+                DienstOption("Gemini", "Sehr genau, kann bei Auslastung aber lange dauern.", vm.dienst == Dienst.GEMINI) { vm.updateDienst(Dienst.GEMINI) }
+                HorizontalDivider(color = cs.outlineVariant)
+                DienstOption("Nur offline", "Ohne Internet direkt am Handy. Bei Handschrift oft ungenau.", vm.dienst == Dienst.OFFLINE) { vm.updateDienst(Dienst.OFFLINE) }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Sind bei Groq und Gemini Schlüssel eingetragen, springt der andere Dienst automatisch ein, wenn der gewählte nicht antwortet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+            )
+
+            // ---------- Groq ----------
+            Spacer(Modifier.height(24.dp))
+            Text("Groq einrichten", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Karte {
+                Column(Modifier.padding(14.dp)) {
+                    Schritt("1", "Groq-Konsole öffnen und anmelden (z. B. mit deinem Google-Konto).")
+                    Schritt("2", "„Create API Key“ antippen, einen Namen vergeben und den Schlüssel kopieren.")
+                    Schritt("3", "Unten einfügen – fertig.")
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(onClick = { uriHandler.openUri("https://console.groq.com/keys") }) {
+                        Text("Groq-Konsole öffnen")
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
+            SchluesselFeld("Groq-API-Schlüssel", groqKeyText) { groqKeyText = it; vm.updateGroqKey(it) }
+            TestZeile(vm.groqTestLaeuft, groqKeyText.isNotBlank(), vm.groqTestErgebnis) { vm.testGroq() }
+
+            // ---------- Gemini ----------
+            Spacer(Modifier.height(24.dp))
+            Text("Gemini einrichten", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
             Karte {
                 Column(Modifier.padding(14.dp)) {
                     Schritt("1", "Google AI Studio öffnen und mit deinem Google-Konto anmelden.")
@@ -680,63 +718,23 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(14.dp))
-            OutlinedTextField(
-                value = keyText,
-                onValueChange = { keyText = it; vm.updateApiKey(it) },
-                label = { Text("Gemini-API-Schlüssel") },
-                singleLine = true,
-                visualTransformation = if (zeigen) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = { zeigen = !zeigen }) {
-                        Icon(
-                            if (zeigen) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            contentDescription = if (zeigen) "Verbergen" else "Anzeigen",
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { vm.testKey() }, enabled = !vm.testLaeuft && keyText.isNotBlank()) {
-                    if (vm.testLaeuft) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = cs.onPrimary)
-                    } else {
-                        Text("Schlüssel testen")
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                vm.testErgebnis?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                }
-            }
+            Spacer(Modifier.height(12.dp))
+            SchluesselFeld("Gemini-API-Schlüssel", keyText) { keyText = it; vm.updateApiKey(it) }
+            TestZeile(vm.testLaeuft, keyText.isNotBlank(), vm.testErgebnis) { vm.testKey() }
 
-            Spacer(Modifier.height(22.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Nur offline erkennen", fontWeight = FontWeight.Medium)
-                    Text(
-                        "Ohne Internet direkt am Handy. Bei Druckschrift gut, bei Handschrift oft ungenau.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = cs.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(checked = vm.offlineOnly, onCheckedChange = { vm.updateOfflineOnly(it) })
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Aktuell: " + if (vm.geminiAktiv) "Gemini (online)" else "Offline-Erkennung am Handy",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                color = cs.primary,
-            )
-
-            Spacer(Modifier.height(22.dp))
+            // ---------- Fortgeschritten ----------
+            Spacer(Modifier.height(24.dp))
             Text("Für Fortgeschrittene", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = groqModellText,
+                onValueChange = { groqModellText = it; vm.updateGroqModell(it) },
+                label = { Text("Groq-Modell") },
+                supportingText = { Text("Standard: $GROQ_STANDARD_MODELL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
             OutlinedTextField(
                 value = modellText,
                 onValueChange = { modellText = it; vm.updateModell(it) },
@@ -748,10 +746,67 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(18.dp))
             Text(
-                "Datenschutz: Zur Erkennung wird das Foto an Google geschickt. Im Gratis-Tarif darf Google die Daten zur Verbesserung seiner Dienste verwenden. Deine Liste selbst bleibt nur auf deinem Handy.",
+                "Datenschutz: Zur Erkennung wird das Foto an den gewählten Dienst (Groq bzw. Google) geschickt. Im Gemini-Gratis-Tarif darf Google die Daten zur Verbesserung seiner Dienste verwenden. Deine Liste selbst bleibt nur auf deinem Handy.",
                 style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun DienstOption(titel: String, text: String, gewaehlt: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        RadioButton(selected = gewaehlt, onClick = onClick)
+        Column(Modifier.weight(1f)) {
+            Text(titel, fontWeight = FontWeight.SemiBold)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SchluesselFeld(label: String, wert: String, onChange: (String) -> Unit) {
+    var zeigen by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = wert,
+        onValueChange = onChange,
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = if (zeigen) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        trailingIcon = {
+            IconButton(onClick = { zeigen = !zeigen }) {
+                Icon(
+                    if (zeigen) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (zeigen) "Verbergen" else "Anzeigen",
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun TestZeile(laeuft: Boolean, aktiv: Boolean, ergebnis: String?, onTest: () -> Unit) {
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = onTest, enabled = !laeuft && aktiv) {
+            if (laeuft) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Text("Schlüssel testen")
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        if (ergebnis != null) {
+            Text(ergebnis, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
         }
     }
 }

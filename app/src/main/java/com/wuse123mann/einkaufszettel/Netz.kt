@@ -128,21 +128,21 @@ object Http {
         }
     }
 
-    fun get(url: String, apiKey: String): Pair<Int, String> = anfrage(url, apiKey, null)
-    fun post(url: String, apiKey: String, body: String, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> =
-        anfrage(url, apiKey, body, hochgeladen)
+    fun get(url: String, kopf: Pair<String, String>): Pair<Int, String> = anfrage(url, kopf, null)
+    fun post(url: String, kopf: Pair<String, String>, body: String, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> =
+        anfrage(url, kopf, body, hochgeladen)
 
-    private fun anfrage(url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> {
+    private fun anfrage(url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> {
         bereit.await(4, TimeUnit.SECONDS)
         val e = engine
         if (e != null) {
             try {
-                val r = cronet(e, url, apiKey, body, hochgeladen)
+                val r = cronet(e, url, kopf, body, hochgeladen)
                 letzterWeg = "Chrome-Netz"
                 return r
             } catch (cronetFehler: IOException) {
                 try {
-                    val r = ok(url, apiKey, body, hochgeladen)
+                    val r = ok(url, kopf, body, hochgeladen)
                     letzterWeg = "OkHttp"
                     return r
                 } catch (okFehler: IOException) {
@@ -151,19 +151,19 @@ object Http {
                 }
             }
         }
-        val r = ok(url, apiKey, body, hochgeladen)
+        val r = ok(url, kopf, body, hochgeladen)
         letzterWeg = "OkHttp"
         return r
     }
 
     private const val STUECK = 16 * 1024
 
-    private fun cronet(e: CronetEngine, url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
+    private fun cronet(e: CronetEngine, url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
         val con = e.openConnection(URL(url)) as HttpURLConnection
         try {
             con.connectTimeout = 20_000
             con.readTimeout = 90_000
-            con.setRequestProperty("x-goog-api-key", apiKey)
+            con.setRequestProperty(kopf.first, kopf.second)
             if (body != null) {
                 val bytes = body.toByteArray(Charsets.UTF_8)
                 con.requestMethod = "POST"
@@ -190,8 +190,8 @@ object Http {
         }
     }
 
-    private fun ok(url: String, apiKey: String, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
-        val b = Request.Builder().url(url).header("x-goog-api-key", apiKey)
+    private fun ok(url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
+        val b = Request.Builder().url(url).header(kopf.first, kopf.second)
         if (body != null) b.post(FortschrittBody(body.toByteArray(Charsets.UTF_8), hochgeladen)) else b.get()
         return okhttp.newCall(b.build()).execute().use { it.code to (it.body?.string() ?: "") }
     }

@@ -21,7 +21,10 @@ import kotlin.coroutines.resumeWithException
 
 data class Erkannt(val name: String, val menge: String, val kat: String, val unsicher: Boolean)
 
-class RecognitionException(message: String) : Exception(message)
+open class RecognitionException(message: String) : Exception(message)
+
+/** Das Bild wurde gelesen, enthält aber keine Einträge – kein Grund, auf einen anderen Dienst auszuweichen. */
+class KeineEintraegeException(message: String) : RecognitionException(message)
 
 /**
  * Ein Schritt der Erkennung für den Fortschrittsbalken.
@@ -63,7 +66,7 @@ object Bilder {
 object Gemini {
     private const val FALLBACK_MODELL = "gemini-flash-lite-latest"
 
-    private fun prompt(anzahl: Int): String {
+    internal fun prompt(anzahl: Int): String {
         val start = if (anzahl > 1)
             "Du bekommst $anzahl Bilder. Sie zeigen zusammen eine handgeschriebene Einkaufsliste (evtl. mehrere Zettel oder Seiten). " +
                 "Fasse alle Einträge zu EINER Liste zusammen; steht derselbe Artikel doppelt drauf, nimm ihn nur einmal."
@@ -116,6 +119,8 @@ Antworte NUR mit JSON in genau diesem Format:
         parseItems(antwort)
     }
 
+    private fun kopf(apiKey: String) = "x-goog-api-key" to apiKey
+
     private fun url(modell: String, aktion: String) =
         "https://generativelanguage.googleapis.com/v1beta/models/" + URLEncoder.encode(modell, "UTF-8") + aktion
 
@@ -128,7 +133,7 @@ Antworte NUR mit JSON in genau diesem Format:
     private fun verfuegbareModelle(apiKey: String): List<String> {
         gefundeneModelle?.let { return it }
         return try {
-            val (code, text) = Http.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", apiKey)
+            val (code, text) = Http.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", kopf(apiKey))
             if (code !in 200..299) return emptyList()
             val arr = JSONObject(text).optJSONArray("models") ?: return emptyList()
             val ausschluss = listOf("image", "tts", "live", "audio", "embedding", "exp", "robotics", "computer", "transcribe")
@@ -161,7 +166,7 @@ Antworte NUR mit JSON in genau diesem Format:
     suspend fun test(apiKey: String, modell: String): String = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         for (m in modelle(modell, apiKey)) {
-            val (code, text) = Http.get(url(m, ""), apiKey)
+            val (code, text) = Http.get(url(m, ""), kopf(apiKey))
             if (code in 200..299) return@withContext "Schlüssel funktioniert ✓ (${sekunden(t0)}, Modell $m, über ${Http.letzterWeg})"
             if (code != 404) fehlerFuerCode(code, text)
         }
@@ -196,7 +201,7 @@ Antworte NUR mit JSON in genau diesem Format:
                 }
                 erstes = false
                 melden(Phase(hochladenText, 0.12f, 0.30f, 0f))
-                val (code, text) = Http.post(url(m, ":generateContent"), apiKey, if (schnell) bodySchnell else bodyNormal) { anteil ->
+                val (code, text) = Http.post(url(m, ":generateContent"), kopf(apiKey), if (schnell) bodySchnell else bodyNormal) { anteil ->
                     if (anteil < 1f) melden(Phase(hochladenText, 0.12f, 0.30f, anteil))
                     else melden(Phase("KI liest die Handschrift …", 0.30f, 0.95f, null, tau = 15f))
                 }
@@ -247,7 +252,7 @@ Antworte NUR mit JSON in genau diesem Format:
     fun netzFehlerText(e: java.io.IOException, dauer: String? = null): String {
         val grund = when (e) {
             is java.net.UnknownHostException ->
-                "Die Adresse des Gemini-Servers konnte nicht ermittelt werden – auch nicht über das Ausweich-DNS. Meist blockiert dann etwas am Handy die App: Werbeblocker/Firewall-App, VPN, „Privates DNS“ (Einstellungen → Netzwerk) oder gesperrte Datennutzung für die App."
+                "Die Adresse des Servers konnte nicht ermittelt werden – auch nicht über das Ausweich-DNS. Meist blockiert dann etwas am Handy die App: Werbeblocker/Firewall-App, VPN, „Privates DNS“ (Einstellungen → Netzwerk) oder gesperrte Datennutzung für die App."
             is java.net.SocketTimeoutException ->
                 "Der Server hat nicht rechtzeitig geantwortet. Läuft ein VPN, Werbeblocker oder eine Firewall-App? Sonst bitte im WLAN erneut versuchen."
             is javax.net.ssl.SSLException ->
@@ -282,7 +287,7 @@ Antworte NUR mit JSON in genau diesem Format:
         return sb.toString()
     }
 
-    private fun parseItems(text: String): List<Erkannt> {
+    internal fun parseItems(text: String, leerErlaubt: Boolean = false): List<Erkannt> {
         val a = text.indexOf('{')
         val b = text.lastIndexOf('}')
         if (a < 0 || b <= a) throw RecognitionException("Die Antwort konnte nicht ausgewertet werden. Bitte noch einmal versuchen.")
@@ -293,8 +298,9 @@ Antworte NUR mit JSON in genau diesem Format:
         }
         val arr = obj.optJSONArray("items") ?: JSONArray()
         if (arr.length() == 0) {
+            if (leerErlaubt) return emptyList()
             val hinweis = obj.optString("hinweis")
-            throw RecognitionException(
+            throw KeineEintraegeException(
                 if (hinweis.isNotBlank()) "Keine Einträge gefunden: $hinweis"
                 else "Auf dem Foto wurden keine Einträge gefunden. Achte auf gutes Licht und fotografier den Zettel möglichst gerade von oben."
             )

@@ -54,7 +54,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     var apiKey by mutableStateOf(store.apiKey)
         private set
-    var offlineOnly by mutableStateOf(store.offlineOnly)
+    var dienst by mutableStateOf(store.dienst)
+        private set
+    var groqKey by mutableStateOf(store.groqKey)
+        private set
+    var groqModell by mutableStateOf(store.groqModell)
+        private set
+    var groqTestErgebnis by mutableStateOf<String?>(null)
+        private set
+    var groqTestLaeuft by mutableStateOf(false)
         private set
     var modell by mutableStateOf(store.modell)
         private set
@@ -81,7 +89,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         Http.init(app)
     }
 
-    val geminiAktiv: Boolean get() = !offlineOnly && apiKey.isNotBlank()
+    /** Reihenfolge der Online-Dienste: gewählter zuerst, der andere springt ein (falls Schlüssel vorhanden). */
+    val onlineReihenfolge: List<Dienst>
+        get() {
+            val g = Dienst.GEMINI.takeIf { apiKey.isNotBlank() }
+            val q = Dienst.GROQ.takeIf { groqKey.isNotBlank() }
+            return when (dienst) {
+                Dienst.GROQ -> listOfNotNull(q, g)
+                Dienst.GEMINI -> listOfNotNull(g, q)
+                Dienst.OFFLINE -> emptyList()
+            }
+        }
+
+    /** Ist für den gewählten Dienst ein Schlüssel eingetragen? */
+    val gewaehlterBereit: Boolean
+        get() = when (dienst) {
+            Dienst.GROQ -> groqKey.isNotBlank()
+            Dienst.GEMINI -> apiKey.isNotBlank()
+            Dienst.OFFLINE -> true
+        }
 
     private fun speichern(neu: List<Item>) {
         items = neu
@@ -147,9 +173,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (uris.isEmpty() || scan is ScanState.Loading || scan is ScanState.Review) return
         if (uris.size > MAX_BILDER) meldung = "Es werden nur die ersten $MAX_BILDER Bilder verwendet"
         val liste = uris.take(MAX_BILDER)
-        val gemini = geminiAktiv
-        val key = apiKey.trim()
-        val m = modell
+        val reihenfolge = onlineReihenfolge
+        val gemini = reihenfolge.isNotEmpty()
+        val gKey = apiKey.trim()
+        val gModell = modell
+        val qKey = groqKey.trim()
+        val qModell = groqModell
         scanJob = viewModelScope.launch {
             scan = ScanState.Loading(liste.size, emptyList(), gemini)
             scanStart = System.currentTimeMillis()
@@ -161,7 +190,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val thumbs = withContext(Dispatchers.Default) { bitmaps.map { Bilder.thumb(it).asImageBitmap() } }
                 scan = ScanState.Loading(liste.size, thumbs, gemini)
                 t0 = System.currentTimeMillis()
-                val erkannt = if (gemini) Gemini.read(bitmaps, key, m, ::melden) else OfflineLeser.read(bitmaps, ::melden)
+                val erkannt = if (!gemini) OfflineLeser.read(bitmaps, ::melden) else {
+                    var ergebnis: List<Erkannt>? = null
+                    for ((i, d) in reihenfolge.withIndex()) {
+                        try {
+                            t0 = System.currentTimeMillis()
+                            ergebnis = when (d) {
+                                Dienst.GROQ -> Groq.read(bitmaps, qKey, qModell, ::melden)
+                                else -> Gemini.read(bitmaps, gKey, gModell, ::melden)
+                            }
+                            break
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: KeineEintraegeException) {
+                            throw e
+                        } catch (e: Exception) {
+                            if (e !is RecognitionException && e !is IOException) throw e
+                            val naechster = reihenfolge.getOrNull(i + 1) ?: throw e
+                            melden(Phase("${d.titel} klappt gerade nicht – versuche ${naechster.titel} …", 0.05f, 0.12f, 0f))
+                        }
+                    }
+                    ergebnis ?: emptyList()
+                }
                 scan = if (erkannt.isEmpty()) {
                     ScanState.Fehler("Auf dem Bild wurde kein Text gefunden. Achte auf gutes Licht und fotografier den Zettel möglichst gerade von oben.")
                 } else {
@@ -215,7 +265,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Einstellungen ----------
     fun updateApiKey(v: String) { apiKey = v.trim(); store.apiKey = apiKey; testErgebnis = null }
-    fun updateOfflineOnly(v: Boolean) { offlineOnly = v; store.offlineOnly = v }
+    fun updateDienst(v: Dienst) { dienst = v; store.dienst = v }
+    fun updateGroqKey(v: String) { groqKey = v.trim(); store.groqKey = groqKey; groqTestErgebnis = null }
+    fun updateGroqModell(v: String) { groqModell = v.trim(); store.groqModell = groqModell; groqTestErgebnis = null }
+
+    fun testGroq() {
+        if (groqKey.isBlank()) { groqTestErgebnis = "Bitte zuerst einen Schlüssel eintragen."; return }
+        groqTestLaeuft = true
+        groqTestErgebnis = null
+        viewModelScope.launch {
+            val t0 = System.currentTimeMillis()
+            groqTestErgebnis = try {
+                Groq.test(groqKey, groqModell)
+            } catch (e: RecognitionException) {
+                e.message
+            } catch (e: IOException) {
+                Gemini.netzFehlerText(e, Gemini.sekunden(t0))
+            } catch (e: Exception) {
+                "Fehler: ${e.message}"
+            }
+            groqTestLaeuft = false
+        }
+    }
     fun updateModell(v: String) { modell = v.trim(); store.modell = modell; testErgebnis = null }
 
     fun testKey() {
