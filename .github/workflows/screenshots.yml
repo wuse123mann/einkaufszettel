@@ -66,9 +66,13 @@ jobs:
       - name: Screenshots einsammeln
         if: always()
         run: |
-          mkdir -p docs/screenshots
-          rm -f docs/screenshots/*.png
-          find app/build/outputs -path '*additional_output*' -name '*.png' -exec cp {} docs/screenshots/ \;
+          mkdir -p neu docs/screenshots
+          find app/build/outputs -path '*additional_output*' -name '*.png' -exec cp {} neu/ \; || true
+          # Nur ersetzen, wenn der Test wirklich neue Bilder geliefert hat
+          if ls neu/*.png >/dev/null 2>&1; then
+            rm -f docs/screenshots/*.png
+            cp neu/*.png docs/screenshots/
+          fi
           ls -la docs/screenshots
 
       - name: Screenshots committen
