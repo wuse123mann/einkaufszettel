@@ -65,7 +65,7 @@ class Store(context: Context) {
     var gelernteKategorien: Map<String, String>
         get() = try {
             val o = org.json.JSONObject(prefs.getString("gelernteKategorien", null) ?: "{}")
-            o.keys().asSequence().associateWith { o.getString(it) }.filterValues { it in KAT_NAMEN }
+            o.keys().asSequence().associateWith { migriereKat(o.getString(it), it) }
         } catch (e: Exception) {
             emptyMap()
         }

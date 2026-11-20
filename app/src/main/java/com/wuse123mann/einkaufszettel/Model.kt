@@ -17,7 +17,8 @@ data class Item(
 const val SONSTIGES = "Sonstiges"
 
 val KATEGORIEN: List<Pair<String, Color>> = listOf(
-    "Obst & Gemüse" to Color(0xFF4F9D4A),
+    "Obst" to Color(0xFFE0773A),
+    "Gemüse" to Color(0xFF4F9D4A),
     "Brot & Backwaren" to Color(0xFFC48A3F),
     "Milch & Käse" to Color(0xFF5B8FC9),
     "Fleisch & Fisch" to Color(0xFFC4584A),
@@ -37,7 +38,8 @@ val KAT_NAMEN: List<String> = KATEGORIEN.map { it.first }
  * Tiefkühl kurz vor der Kassa. Die Filialen unterscheiden sich – in der App anpassbar.
  */
 val HOFER_REIHENFOLGE: List<String> = listOf(
-    "Obst & Gemüse",
+    "Obst",
+    "Gemüse",
     "Brot & Backwaren",
     "Kühlregal",
     "Milch & Käse",
@@ -52,7 +54,18 @@ val HOFER_REIHENFOLGE: List<String> = listOf(
 
 /** Bereinigt eine gespeicherte Reihenfolge: unbekannte raus, fehlende hinten anhängen. */
 fun gueltigeReihenfolge(liste: List<String>): List<String> =
-    (liste.filter { it in KAT_NAMEN } + KAT_NAMEN).distinct()
+    (liste.flatMap { if (it == ALT_OBST_GEMUESE) listOf("Obst", "Gemüse") else listOf(it) }
+        .filter { it in KAT_NAMEN } + KAT_NAMEN).distinct()
+
+/** Frühere gemeinsame Abteilung – wird beim Laden auf „Obst“ bzw. „Gemüse“ aufgeteilt. */
+const val ALT_OBST_GEMUESE = "Obst & Gemüse"
+
+fun obstOderGemuese(name: String): String =
+    if (guessKat(name) == "Obst") "Obst" else "Gemüse"
+
+/** Wandelt alte Abteilungen um und prüft die Gültigkeit. */
+fun migriereKat(kat: String?, name: String): String =
+    if (kat == ALT_OBST_GEMUESE) obstOderGemuese(name) else validKat(kat)
 
 fun katColor(kat: String): Color = KATEGORIEN.firstOrNull { it.first == kat }?.second ?: Color(0xFF9A9A8A)
 
@@ -62,7 +75,8 @@ private fun rx(s: String) = Regex(s, RegexOption.IGNORE_CASE)
 
 /** Einfache Abteilungs-Zuordnung für Handeinträge und die Offline-Erkennung. */
 private val STICHWORTE: List<Pair<String, Regex>> = listOf(
-    "Obst & Gemüse" to rx("apfel|äpfel|banane|birne|tomate|paradeiser|gurke|salat|zwiebel|knoblauch|karotte|möhre|kartoffel|erdäpfel|paprika|zitrone|orange|obst|gemüse|beere|traube|pilz|champignon|zucchini|brokkoli|lauch|kräuter|petersilie|avocado|spinat|kohl|mango|kiwi|ingwer"),
+    "Obst" to rx("apfel|äpfel|banane|birne|zitrone|orange|obst|beere|traube|mango|kiwi|ananas|melone|marille|aprikose|pfirsich|nektarine|zwetsch|pflaume|kirsche|mandarine|clementine|limette|grapefruit|feige|dattel|granatapfel|rosine"),
+    "Gemüse" to rx("tomate|paradeiser|gurke|salat|zwiebel|knoblauch|karotte|möhre|kartoffel|erdäpfel|paprika|gemüse|pilz|champignon|zucchini|brokkoli|lauch|kräuter|petersilie|schnittlauch|basilikum|avocado|spinat|kohl|ingwer|kürbis|aubergine|melanzani|sellerie|radieschen|rettich|fenchel|spargel|fisolen|mais\\b|rucola|vogerl|jungzwiebel|chili"),
     "Brot & Backwaren" to rx("brot|semmel|brötchen|weckerl|toast|croissant|kipferl|baguette|gebäck|kuchen|striezel"),
     "Milch & Käse" to rx("milch|käse|joghurt|butter|topfen|quark|sahne|obers|rahm|\\bei(?:er)?\\b|mozzarella|feta|parmesan|skyr"),
     "Fleisch & Fisch" to rx("fleisch|hendl|huhn|hähnchen|faschiert|hack|wurst|schinken|speck|lachs|fisch|thunfisch|steak|schnitzel|salami|leberkäs|würstel"),
@@ -110,7 +124,7 @@ fun itemsFromJson(text: String): List<Item> {
             id = o.optString("id").ifBlank { UUID.randomUUID().toString() },
             name = name,
             menge = o.optString("menge"),
-            kat = validKat(o.optString("kat")),
+            kat = migriereKat(o.optString("kat"), name),
             done = o.optBoolean("done"),
             unsicher = o.optBoolean("unsicher"),
         )
