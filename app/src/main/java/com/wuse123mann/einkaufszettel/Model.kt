@@ -31,6 +31,29 @@ val KATEGORIEN: List<Pair<String, Color>> = listOf(
 )
 val KAT_NAMEN: List<String> = KATEGORIEN.map { it.first }
 
+/**
+ * Typischer Laufweg in einer Hofer-Filiale (Österreich): Eingang mit Marktplatz (Obst & Gemüse),
+ * Backbox, gleich danach Coolbox/Kühlregal, dann Trockensortiment, Getränke, Drogerie,
+ * Tiefkühl kurz vor der Kassa. Die Filialen unterscheiden sich – in der App anpassbar.
+ */
+val HOFER_REIHENFOLGE: List<String> = listOf(
+    "Obst & Gemüse",
+    "Brot & Backwaren",
+    "Kühlregal",
+    "Milch & Käse",
+    "Fleisch & Fisch",
+    "Vorrat & Konserven",
+    "Süßes & Snacks",
+    "Getränke",
+    "Drogerie & Haushalt",
+    "Tiefkühl",
+    SONSTIGES,
+)
+
+/** Bereinigt eine gespeicherte Reihenfolge: unbekannte raus, fehlende hinten anhängen. */
+fun gueltigeReihenfolge(liste: List<String>): List<String> =
+    (liste.filter { it in KAT_NAMEN } + KAT_NAMEN).distinct()
+
 fun katColor(kat: String): Color = KATEGORIEN.firstOrNull { it.first == kat }?.second ?: Color(0xFF9A9A8A)
 
 fun validKat(kat: String?): String = if (kat != null && kat in KAT_NAMEN) kat else SONSTIGES

@@ -54,6 +54,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     var apiKey by mutableStateOf(store.apiKey)
         private set
+    /** Reihenfolge der Abteilungen = Laufweg im Geschäft. */
+    var reihenfolge by mutableStateOf(store.reihenfolge)
+        private set
+
+    fun verschieben(kat: String, richtung: Int) {
+        val l = reihenfolge.toMutableList()
+        val i = l.indexOf(kat)
+        val j = i + richtung
+        if (i < 0 || j !in l.indices) return
+        l[i] = l[j].also { l[j] = l[i] }
+        reihenfolge = l
+        store.reihenfolge = l
+    }
+
+    fun reihenfolgeSetzen(l: List<String>) {
+        reihenfolge = gueltigeReihenfolge(l)
+        store.reihenfolge = reihenfolge
+    }
+
     var dienst by mutableStateOf(store.dienst)
         private set
     var groqKey by mutableStateOf(store.groqKey)
@@ -152,7 +171,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun shareText(): String {
         val offen = items.filter { !it.done }
         val sb = StringBuilder("Einkaufsliste\n")
-        for (kat in KAT_NAMEN) {
+        for (kat in reihenfolge) {
             val g = offen.filter { it.kat == kat }
             if (g.isEmpty()) continue
             sb.append("\n").append(kat).append(":\n")

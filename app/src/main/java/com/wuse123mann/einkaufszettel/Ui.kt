@@ -27,6 +27,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
@@ -251,7 +253,8 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
             if (items.isEmpty()) {
                 item(key = "leer") { LeerZustand() }
             } else {
-                for ((kat, farbe) in KATEGORIEN) {
+                for (kat in vm.reihenfolge) {
+                    val farbe = katColor(kat)
                     val g = offen.filter { it.kat == kat }
                     if (g.isEmpty()) continue
                     item(key = "kat_$kat") {
@@ -721,6 +724,42 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             SchluesselFeld("Gemini-API-Schlüssel", keyText) { keyText = it; vm.updateApiKey(it) }
             TestZeile(vm.testLaeuft, keyText.isNotBlank(), vm.testErgebnis) { vm.testKey() }
+
+            // ---------- Laufweg ----------
+            Spacer(Modifier.height(24.dp))
+            Text("Reihenfolge im Geschäft", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Die Liste wird nach deinem Weg durch das Geschäft sortiert. Vorlage ist der typische Hofer-Laufweg – mit den Pfeilen passt du ihn an deine Filiale an.",
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Karte {
+                vm.reihenfolge.forEachIndexed { i, kat ->
+                    if (i > 0) HorizontalDivider(color = cs.outlineVariant)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp),
+                    ) {
+                        Text("${i + 1}.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.width(26.dp))
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(katColor(kat)))
+                        Spacer(Modifier.width(10.dp))
+                        Text(kat, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { vm.verschieben(kat, -1) }, enabled = i > 0) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "$kat nach oben")
+                        }
+                        IconButton(onClick = { vm.verschieben(kat, 1) }, enabled = i < vm.reihenfolge.size - 1) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "$kat nach unten")
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.reihenfolgeSetzen(HOFER_REIHENFOLGE) }) { Text("Hofer-Vorlage") }
+                OutlinedButton(onClick = { vm.reihenfolgeSetzen(KAT_NAMEN) }) { Text("Standard") }
+            }
 
             // ---------- Fortgeschritten ----------
             Spacer(Modifier.height(24.dp))

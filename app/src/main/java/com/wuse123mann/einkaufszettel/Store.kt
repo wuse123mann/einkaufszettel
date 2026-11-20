@@ -52,6 +52,15 @@ class Store(context: Context) {
         get() = prefs.getString("groqModell", GROQ_STANDARD_MODELL)?.ifBlank { GROQ_STANDARD_MODELL } ?: GROQ_STANDARD_MODELL
         set(v) = prefs.edit().putString("groqModell", v).apply()
 
+    var reihenfolge: List<String>
+        get() = try {
+            val a = org.json.JSONArray(prefs.getString("reihenfolge", null) ?: return HOFER_REIHENFOLGE)
+            gueltigeReihenfolge((0 until a.length()).map { a.getString(it) })
+        } catch (e: Exception) {
+            HOFER_REIHENFOLGE
+        }
+        set(v) = prefs.edit().putString("reihenfolge", org.json.JSONArray(v).toString()).apply()
+
     var modell: String
         get() = prefs.getString("modell", STANDARD_MODELL)?.ifBlank { STANDARD_MODELL } ?: STANDARD_MODELL
         set(v) = prefs.edit().putString("modell", v).apply()
