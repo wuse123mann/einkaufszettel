@@ -690,7 +690,7 @@ private fun ColumnScope.LadeInhalt(s: ScanState.Loading, phase: Phase?, start: L
     }
     Spacer(Modifier.height(6.dp))
     Text(
-        if (s.gemini) "Die Dauer hängt davon ab, wie ausgelastet Googles Server gerade sind."
+        if (s.gemini) "Die Dauer hängt davon ab, wie ausgelastet die Server gerade sind."
         else "Die Offline-Erkennung läuft direkt am Handy.",
         style = MaterialTheme.typography.bodySmall,
         color = cs.onSurfaceVariant,

@@ -209,8 +209,8 @@ class ScreenshotTest {
         schritt("einstellungen") {
             compose.onNodeWithContentDescription("Einstellungen").performClick()
             foto("06_einstellungen")
-            compose.onNodeWithText("Groq-Konsole öffnen").performScrollTo()
-            foto("07_groq")
+            compose.onNodeWithText("Google AI Studio öffnen").performScrollTo()
+            foto("07_gemini")
             compose.onNodeWithText("Hofer-Vorlage").performScrollTo()
             foto("08_reihenfolge")
             zurueck()
