@@ -42,11 +42,28 @@ class ScreenshotTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val ctx get() = instrumentation.targetContext
 
+    private var letztes: Bitmap? = null
+    private val fehler = mutableListOf<String>()
+
+    /**
+     * Fotografiert den Bildschirm. Der Emulator rendert langsam (Software-Grafik), darum wird
+     * gewartet, bis sich das Bild gegenüber dem letzten Foto geändert hat und stabil ist.
+     */
     private fun foto(name: String) {
         compose.waitForIdle()
-        Thread.sleep(900)
-        val bmp = instrumentation.uiAutomation.takeScreenshot() ?: return
-        TestStorage().openOutputFile("$name.png").use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        instrumentation.uiAutomation.executeShellCommand("am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS").close()
+        Thread.sleep(700)
+        var bild = instrumentation.uiAutomation.takeScreenshot() ?: return
+        val ende = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < ende) {
+            Thread.sleep(800)
+            val neu = instrumentation.uiAutomation.takeScreenshot() ?: break
+            val geaendert = letztes?.let { !neu.sameAs(it) } ?: true
+            if (geaendert && neu.sameAs(bild)) { bild = neu; break }
+            bild = neu
+        }
+        letztes = bild
+        TestStorage().openOutputFile("$name.png").use { bild.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     /** Führt einen Schritt aus; ein Fehler verhindert nicht die übrigen Screenshots. */
@@ -55,6 +72,7 @@ class ScreenshotTest {
             block()
         } catch (t: Throwable) {
             Log.e("ScreenshotTest", "Schritt $name fehlgeschlagen", t)
+            fehler += "$name: ${t.javaClass.simpleName}: ${t.message?.lines()?.take(3)?.joinToString(" | ")}"
             zurueck()
         }
     }
@@ -153,9 +171,9 @@ class ScreenshotTest {
 
         // 3. Abteilung ändern (langer Druck)
         schritt("abteilung") {
-            compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Sauerrahm"))
+            compose.onAllNodes(hasScrollToNodeAction())[0].performScrollToNode(hasText("Sauerrahm"))
             compose.waitForIdle()
-            compose.onNodeWithText("Sauerrahm").performTouchInput { longClick() }
+            compose.onNodeWithText("Sauerrahm", useUnmergedTree = false).performTouchInput { longClick(center, 1500) }
             foto("03_abteilung")
             zurueck()
         }
@@ -207,5 +225,7 @@ class ScreenshotTest {
         }
 
         scenario.close()
+        // Fehler sichtbar machen (die Screenshots werden trotzdem übernommen)
+        if (fehler.isNotEmpty()) throw AssertionError("Fehlgeschlagene Schritte:\n" + fehler.joinToString("\n"))
     }
 }

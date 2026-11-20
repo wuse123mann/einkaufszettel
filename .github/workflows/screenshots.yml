@@ -42,8 +42,8 @@ jobs:
       - name: Screenshots im Emulator aufnehmen
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
-          target: google_apis
+          api-level: 33
+          target: default
           arch: x86_64
           profile: pixel_6
           disable-animations: true
@@ -51,6 +51,9 @@ jobs:
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save
           script: |
+            adb shell settings put global hide_error_dialogs 1
+            sleep 25
+            adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
             adb shell cmd uimode night yes
             adb shell settings put global sysui_demo_allowed 1
             adb shell am broadcast -a com.android.systemui.demo -e command enter
@@ -64,6 +67,7 @@ jobs:
         if: always()
         run: |
           mkdir -p docs/screenshots
+          rm -f docs/screenshots/*.png
           find app/build/outputs -path '*additional_output*' -name '*.png' -exec cp {} docs/screenshots/ \;
           ls -la docs/screenshots
 
