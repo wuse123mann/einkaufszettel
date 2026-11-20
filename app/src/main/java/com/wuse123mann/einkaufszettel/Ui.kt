@@ -28,7 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -58,6 +61,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -89,6 +93,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
     var pendingPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var katItem by remember { mutableStateOf<Item?>(null) }
+    var listenAuswahl by remember { mutableStateOf(false) }
     var neuText by rememberSaveable { mutableStateOf("") }
 
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -133,9 +138,18 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("Einkaufsliste", fontWeight = FontWeight.Bold)
-                        Text(untertitel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { listenAuswahl = true }
+                            .padding(end = 6.dp),
+                    ) {
+                        Column(Modifier.weight(1f, fill = false)) {
+                            Text(vm.aktiveName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(untertitel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Liste wechseln")
                     }
                 },
                 actions = {
@@ -300,6 +314,10 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
         }
     }
 
+    if (listenAuswahl) {
+        ListenSheet(vm, onClose = { listenAuswahl = false })
+    }
+
     katItem?.let { item ->
         AlertDialog(
             onDismissRequest = { katItem = null },
@@ -345,6 +363,112 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                 ) { Text("Löschen") }
             },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Abbrechen") } },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ListenSheet(vm: MainViewModel, onClose: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    var nameDialog by remember { mutableStateOf<Liste?>(null) }   // id leer = neue Liste
+    var loeschen by remember { mutableStateOf<Liste?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = cs.surfaceContainerLowest,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 16.dp)) {
+            Text("Meine Listen", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+                items(vm.listen, key = { it.id }) { l ->
+                    val offen = l.items.count { !it.done }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { vm.listeWaehlen(l.id); onClose() }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        RadioButton(selected = l.id == vm.aktiveId, onClick = { vm.listeWaehlen(l.id); onClose() })
+                        Column(Modifier.weight(1f)) {
+                            Text(l.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                when {
+                                    l.items.isEmpty() -> "leer"
+                                    offen == 0 -> "alles erledigt"
+                                    else -> "$offen offen"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { nameDialog = l }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "${l.name} umbenennen", tint = cs.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { loeschen = l }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "${l.name} löschen", tint = cs.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { nameDialog = Liste(id = "", name = "") }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Neue Liste")
+            }
+        }
+    }
+
+    nameDialog?.let { l ->
+        val neu = l.id.isEmpty()
+        var text by remember(l.id) { mutableStateOf(l.name) }
+        val fertig = {
+            if (neu) { vm.listeAnlegen(text); onClose() } else vm.listeUmbenennen(l.id, text)
+            nameDialog = null
+        }
+        AlertDialog(
+            onDismissRequest = { nameDialog = null },
+            title = { Text(if (neu) "Neue Liste" else "Liste umbenennen") },
+            text = {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("z. B. Wochenende, Grillfest, Drogerie") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) fertig() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { fertig() }, enabled = text.isNotBlank()) { Text(if (neu) "Anlegen" else "Speichern") }
+            },
+            dismissButton = { TextButton(onClick = { nameDialog = null }) { Text("Abbrechen") } },
+        )
+    }
+
+    loeschen?.let { l ->
+        AlertDialog(
+            onDismissRequest = { loeschen = null },
+            title = { Text("„${l.name}“ löschen?") },
+            text = {
+                Text(
+                    if (vm.listen.size <= 1) "Das ist deine einzige Liste – sie wird geleert."
+                    else "Die Liste mit ${l.items.size} Artikeln wird entfernt."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.listeLoeschen(l.id); loeschen = null },
+                    colors = ButtonDefaults.textButtonColors(contentColor = cs.error),
+                ) { Text("Löschen") }
+            },
+            dismissButton = { TextButton(onClick = { loeschen = null }) { Text("Abbrechen") } },
         )
     }
 }

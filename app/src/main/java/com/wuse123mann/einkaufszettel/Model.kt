@@ -131,3 +131,33 @@ fun itemsFromJson(text: String): List<Item> {
     }
     return out
 }
+
+
+/** Eine benannte Einkaufsliste. */
+data class Liste(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val items: List<Item> = emptyList(),
+)
+
+fun listenToJson(listen: List<Liste>): String {
+    val arr = JSONArray()
+    for (l in listen) {
+        arr.put(JSONObject().put("id", l.id).put("name", l.name).put("items", JSONArray(itemsToJson(l.items))))
+    }
+    return arr.toString()
+}
+
+fun listenFromJson(text: String): List<Liste> {
+    val arr = JSONArray(text)
+    val out = ArrayList<Liste>()
+    for (n in 0 until arr.length()) {
+        val o = arr.optJSONObject(n) ?: continue
+        out += Liste(
+            id = o.optString("id").ifBlank { UUID.randomUUID().toString() },
+            name = o.optString("name").ifBlank { "Einkaufsliste" },
+            items = itemsFromJson(o.optJSONArray("items")?.toString() ?: "[]"),
+        )
+    }
+    return out
+}

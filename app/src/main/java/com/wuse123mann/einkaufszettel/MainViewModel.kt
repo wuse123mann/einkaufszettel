@@ -46,8 +46,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val saveLock = Mutex()
     private val fotoDir = File(app.cacheDir, "fotos")
 
-    var items by mutableStateOf(store.load())
+    var listen by mutableStateOf(store.loadListen())
         private set
+    var aktiveId by mutableStateOf(store.aktiveListe?.takeIf { id -> listen.any { it.id == id } } ?: listen.first().id)
+        private set
+
+    /** Artikel der gerade geöffneten Liste. */
+    var items by mutableStateOf(listen.first { it.id == aktiveId }.items)
+        private set
+
+    val aktiveName: String get() = listen.find { it.id == aktiveId }?.name ?: "Einkaufsliste"
+
+    private fun listenSpeichern(neu: List<Liste>) {
+        listen = neu
+        viewModelScope.launch(Dispatchers.IO) {
+            saveLock.withLock { store.saveListen(neu) }
+        }
+    }
+
+    fun listeWaehlen(id: String) {
+        val l = listen.find { it.id == id } ?: return
+        aktiveId = id
+        items = l.items
+        store.aktiveListe = id
+    }
+
+    fun listeAnlegen(name: String) {
+        val neu = Liste(name = name.trim().ifBlank { "Neue Liste" })
+        listenSpeichern(listen + neu)
+        listeWaehlen(neu.id)
+        meldung = "Liste „${neu.name}“ angelegt"
+    }
+
+    fun listeUmbenennen(id: String, name: String) {
+        val n = name.trim()
+        if (n.isEmpty()) return
+        listenSpeichern(listen.map { if (it.id == id) it.copy(name = n) else it })
+    }
+
+    fun listeLoeschen(id: String) {
+        val l = listen.find { it.id == id } ?: return
+        val rest = listen.filterNot { it.id == id }
+        if (rest.isEmpty()) {
+            // letzte Liste: nicht entfernen, nur leeren
+            val leer = l.copy(items = emptyList())
+            listenSpeichern(listOf(leer))
+            listeWaehlen(leer.id)
+        } else {
+            listenSpeichern(rest)
+            if (id == aktiveId) listeWaehlen(rest.first().id)
+        }
+        meldung = "Liste „${l.name}“ gelöscht"
+    }
     var scan by mutableStateOf<ScanState>(ScanState.Idle)
         private set
     var meldung by mutableStateOf<String?>(null)
@@ -145,9 +195,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun speichern(neu: List<Item>) {
         items = neu
-        viewModelScope.launch(Dispatchers.IO) {
-            saveLock.withLock { store.save(neu) }
-        }
+        listenSpeichern(listen.map { if (it.id == aktiveId) it.copy(items = neu) else it })
     }
 
     // ---------- Liste ----------
@@ -185,7 +233,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun shareText(): String {
         val offen = items.filter { !it.done }
-        val sb = StringBuilder("Einkaufsliste\n")
+        val sb = StringBuilder(aktiveName).append("\n")
         for (kat in reihenfolge) {
             val g = offen.filter { it.kat == kat }
             if (g.isEmpty()) continue

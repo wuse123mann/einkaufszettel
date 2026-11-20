@@ -7,26 +7,39 @@ const val STANDARD_MODELL = "gemini-flash-latest"
 
 enum class Dienst(val titel: String) { GROQ("Groq"), GEMINI("Gemini"), OFFLINE("Offline") }
 
-/** Speichert die Liste als JSON-Datei und die Einstellungen in SharedPreferences. */
+/** Speichert die Listen als JSON-Datei und die Einstellungen in SharedPreferences. */
 class Store(context: Context) {
-    private val file = File(context.filesDir, "liste.json")
+    private val altDatei = File(context.filesDir, "liste.json")
+    private val file = File(context.filesDir, "listen.json")
     private val prefs = context.getSharedPreferences("einstellungen", Context.MODE_PRIVATE)
 
-    fun load(): List<Item> = try {
-        if (file.exists()) itemsFromJson(file.readText()) else emptyList()
-    } catch (e: Exception) {
-        emptyList()
+    /** Lädt alle Listen; übernimmt beim ersten Start die frühere Einzel-Liste. Nie leer. */
+    fun loadListen(): List<Liste> {
+        val geladen = try {
+            when {
+                file.exists() -> listenFromJson(file.readText())
+                altDatei.exists() -> listOf(Liste(name = "Einkaufsliste", items = itemsFromJson(altDatei.readText())))
+                else -> emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        return geladen.ifEmpty { listOf(Liste(name = "Einkaufsliste")) }
     }
 
     @Synchronized
-    fun save(items: List<Item>) {
-        val tmp = File(file.parentFile, "liste.json.tmp")
-        tmp.writeText(itemsToJson(items))
+    fun saveListen(listen: List<Liste>) {
+        val tmp = File(file.parentFile, "listen.json.tmp")
+        tmp.writeText(listenToJson(listen))
         if (!tmp.renameTo(file)) {
             file.writeText(tmp.readText())
             tmp.delete()
         }
     }
+
+    var aktiveListe: String?
+        get() = prefs.getString("aktiveListe", null)
+        set(v) = prefs.edit().putString("aktiveListe", v).apply()
 
     var apiKey: String
         get() = prefs.getString("apiKey", "") ?: ""
