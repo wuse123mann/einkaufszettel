@@ -19,8 +19,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Screenshots aus dem Test werden über den Test-Storage-Dienst eingesammelt
         testInstrumentationRunnerArguments["useTestStorageService"] = "true"
-        // nur Handy-Prozessoren: halbiert die APK-Größe (Offline-Texterkennung)
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -36,6 +34,9 @@ android {
 
     buildTypes {
         release {
+            // nur Handy-Prozessoren: halbiert die APK-Größe (Offline-Texterkennung).
+            // Der Debug-Build behält x86_64 für den Emulator (Screenshots).
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

@@ -7,7 +7,11 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.ui.graphics.asImageBitmap
+import android.util.Log
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -43,6 +47,16 @@ class ScreenshotTest {
         Thread.sleep(900)
         val bmp = instrumentation.uiAutomation.takeScreenshot() ?: return
         TestStorage().openOutputFile("$name.png").use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /** Führt einen Schritt aus; ein Fehler verhindert nicht die übrigen Screenshots. */
+    private fun schritt(name: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.e("ScreenshotTest", "Schritt $name fehlgeschlagen", t)
+            zurueck()
+        }
     }
 
     private fun zurueck() {
@@ -128,54 +142,69 @@ class ScreenshotTest {
         scenario.onActivity { vm = ViewModelProvider(it)[MainViewModel::class.java] }
 
         // 1. Liste nach Laufweg sortiert
-        foto("01_liste")
+        schritt("liste") { foto("01_liste") }
 
         // 2. Listen-Auswahl
-        compose.onNodeWithText("Wocheneinkauf").performClick()
-        foto("02_listen")
-        zurueck()
+        schritt("listen") {
+            compose.onNodeWithText("Wocheneinkauf").performClick()
+            foto("02_listen")
+            zurueck()
+        }
 
         // 3. Abteilung ändern (langer Druck)
-        compose.onNodeWithText("Sauerrahm").performTouchInput { longClick() }
-        foto("03_abteilung")
-        compose.onNodeWithText("Abbrechen").performClick()
+        schritt("abteilung") {
+            compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Sauerrahm"))
+            compose.waitForIdle()
+            compose.onNodeWithText("Sauerrahm").performTouchInput { longClick() }
+            foto("03_abteilung")
+            zurueck()
+        }
 
         // 4. Erkennung läuft
         val bild = zettel().asImageBitmap()
-        scenario.onActivity {
-            vm.demoScan(ScanState.Loading(1, listOf(bild), true), Phase("KI liest die Handschrift …", 0.30f, 0.95f, 0.55f))
+        schritt("laden") {
+            scenario.onActivity {
+                vm.demoScan(ScanState.Loading(1, listOf(bild), true), Phase("KI liest die Handschrift …", 0.30f, 0.95f, 0.55f))
+            }
+            foto("04_laden")
+            scenario.onActivity { vm.closeScan() }
         }
-        foto("04_laden")
 
         // 5. Erkannte Einträge prüfen
-        val erkannt = listOf(
-            ReviewItem(name = "Milch", menge = "2 l", kat = "Milch & Käse", unsicher = false),
-            ReviewItem(name = "Eier", menge = "10 Stk", kat = "Milch & Käse", unsicher = false),
-            ReviewItem(name = "Sauerrahm", menge = "", kat = "Milch & Käse", unsicher = false),
-            ReviewItem(name = "Äpfel", menge = "1 kg", kat = "Obst", unsicher = false),
-            ReviewItem(name = "Germ", menge = "", kat = "Vorrat & Konserven", unsicher = true),
-            ReviewItem(name = "Kaffee", menge = "", kat = "Vorrat & Konserven", unsicher = false),
-            ReviewItem(name = "Klopapier", menge = "", kat = "Drogerie & Haushalt", unsicher = false, on = false),
-        )
-        scenario.onActivity { vm.demoScan(ScanState.Review(erkannt, listOf(bild), offline = false)) }
-        foto("05_pruefen")
-        scenario.onActivity { vm.closeScan() }
-        compose.waitForIdle()
+        schritt("pruefen") {
+            val erkannt = listOf(
+                ReviewItem(name = "Milch", menge = "2 l", kat = "Milch & Käse", unsicher = false),
+                ReviewItem(name = "Eier", menge = "10 Stk", kat = "Milch & Käse", unsicher = false),
+                ReviewItem(name = "Sauerrahm", menge = "", kat = "Milch & Käse", unsicher = false),
+                ReviewItem(name = "Äpfel", menge = "1 kg", kat = "Obst", unsicher = false),
+                ReviewItem(name = "Germ", menge = "", kat = "Vorrat & Konserven", unsicher = true),
+                ReviewItem(name = "Kaffee", menge = "", kat = "Vorrat & Konserven", unsicher = false),
+                ReviewItem(name = "Klopapier", menge = "", kat = "Drogerie & Haushalt", unsicher = false, on = false),
+            )
+            scenario.onActivity { vm.demoScan(ScanState.Review(erkannt, listOf(bild), offline = false)) }
+            foto("05_pruefen")
+            scenario.onActivity { vm.closeScan() }
+            compose.waitForIdle()
+        }
 
         // 6.–8. Einstellungen
-        compose.onNodeWithContentDescription("Einstellungen").performClick()
-        foto("06_einstellungen")
-        compose.onNodeWithText("Groq-Konsole öffnen").performScrollTo()
-        foto("07_groq")
-        compose.onNodeWithText("Hofer-Vorlage").performScrollTo()
-        foto("08_reihenfolge")
-        zurueck()
+        schritt("einstellungen") {
+            compose.onNodeWithContentDescription("Einstellungen").performClick()
+            foto("06_einstellungen")
+            compose.onNodeWithText("Groq-Konsole öffnen").performScrollTo()
+            foto("07_groq")
+            compose.onNodeWithText("Hofer-Vorlage").performScrollTo()
+            foto("08_reihenfolge")
+            zurueck()
+        }
 
         // 9. Andere Liste
-        scenario.onActivity { act ->
-            vm.listen.firstOrNull { it.name == "Grillfest" }?.let { vm.listeWaehlen(it.id) }
+        schritt("grillfest") {
+            scenario.onActivity { _ ->
+                vm.listen.firstOrNull { it.name == "Grillfest" }?.let { vm.listeWaehlen(it.id) }
+            }
+            foto("09_grillfest")
         }
-        foto("09_grillfest")
 
         scenario.close()
     }
