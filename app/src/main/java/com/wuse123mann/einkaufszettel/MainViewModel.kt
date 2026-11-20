@@ -68,6 +68,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         store.reihenfolge = l
     }
 
+    private var gelernt: Map<String, String> = store.gelernteKategorien
+    private fun schluessel(name: String) = name.trim().lowercase()
+
+    /** Abteilung für einen Artikel: eigene Zuordnung des Nutzers hat Vorrang. */
+    fun katFuer(name: String, vorschlag: String): String = gelernt[schluessel(name)] ?: vorschlag
+
+    fun kategorieAendern(id: String, kat: String) {
+        val item = items.find { it.id == id } ?: return
+        if (item.kat == kat) return
+        speichern(items.map { if (it.id == id) it.copy(kat = kat) else it })
+        gelernt = gelernt + (schluessel(item.name) to kat)
+        store.gelernteKategorien = gelernt
+        meldung = "„${item.name}“ ist jetzt bei $kat – auch beim nächsten Mal"
+    }
+
     fun reihenfolgeSetzen(l: List<String>) {
         reihenfolge = gueltigeReihenfolge(l)
         store.reihenfolge = reihenfolge
@@ -165,7 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             meldung = "„$schoen“ steht schon auf der Liste"
             return
         }
-        speichern(items + Item(name = schoen, menge = menge, kat = guessKat(schoen)))
+        speichern(items + Item(name = schoen, menge = menge, kat = katFuer(schoen, guessKat(schoen))))
     }
 
     fun shareText(): String {
@@ -269,7 +284,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val name = r.name.trim()
             if (!r.on || name.isEmpty()) continue
             if (!vorhanden.add(name.lowercase())) { doppelt++; continue }
-            neu += Item(name = name, menge = r.menge.trim(), kat = r.kat, unsicher = r.unsicher)
+            neu += Item(name = name, menge = r.menge.trim(), kat = katFuer(name, r.kat), unsicher = r.unsicher)
         }
         speichern(items + neu)
         scan = ScanState.Idle

@@ -11,7 +11,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -86,6 +88,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
     val scope = rememberCoroutineScope()
     var pendingPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var katItem by remember { mutableStateOf<Item?>(null) }
     var neuText by rememberSaveable { mutableStateOf("") }
 
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -258,7 +261,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                     val g = offen.filter { it.kat == kat }
                     if (g.isEmpty()) continue
                     item(key = "kat_$kat") {
-                        Gruppe(kat, farbe, g, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) })
+                        Gruppe(kat, farbe, g, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it })
                     }
                 }
                 if (erledigt.isNotEmpty()) {
@@ -273,13 +276,20 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                         Karte {
                             erledigt.forEachIndexed { i, it ->
                                 if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                ItemRow(it, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) })
+                                ItemRow(it, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it })
                             }
                         }
                     }
                 }
                 item(key = "alles_loeschen") {
-                    Box(Modifier.fillMaxWidth().padding(top = 18.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Tipp: Artikel lange drücken, um ihn in eine andere Abteilung zu schieben.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    )
+                    Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
                         TextButton(
                             onClick = { confirmClear = true },
                             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -288,6 +298,39 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                 }
             }
         }
+    }
+
+    katItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { katItem = null },
+            title = { Text("Abteilung für „${item.name}“") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    for (kat in vm.reihenfolge) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { vm.kategorieAendern(item.id, kat); katItem = null }
+                                .padding(vertical = 2.dp),
+                        ) {
+                            RadioButton(selected = item.kat == kat, onClick = { vm.kategorieAendern(item.id, kat); katItem = null })
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(katColor(kat)))
+                            Spacer(Modifier.width(10.dp))
+                            Text(kat)
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Die App merkt sich das und sortiert „${item.name}“ künftig automatisch hierher.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { katItem = null }) { Text("Abbrechen") } },
+        )
     }
 
     if (confirmClear) {
@@ -336,26 +379,27 @@ private fun Karte(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Gruppe(titel: String, farbe: Color, items: List<Item>, onToggle: (Item) -> Unit, onDelete: (Item) -> Unit) {
+private fun Gruppe(titel: String, farbe: Color, items: List<Item>, onToggle: (Item) -> Unit, onDelete: (Item) -> Unit, onLongPress: (Item) -> Unit) {
     Column(Modifier.padding(top = 14.dp)) {
         GruppenTitel(titel, farbe, Modifier.padding(start = 4.dp, bottom = 6.dp))
         Karte {
             items.forEachIndexed { i, it ->
                 if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ItemRow(it, onToggle = { onToggle(it) }, onDelete = { onDelete(it) })
+                ItemRow(it, onToggle = { onToggle(it) }, onDelete = { onDelete(it) }, onLongPress = { onLongPress(it) })
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> Unit) {
+private fun ItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> Unit, onLongPress: () -> Unit = {}) {
     val cs = MaterialTheme.colorScheme
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
+            .combinedClickable(onClick = onToggle, onLongClick = onLongPress, onLongClickLabel = "Abteilung ändern")
             .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 2.dp),
     ) {
         Box(

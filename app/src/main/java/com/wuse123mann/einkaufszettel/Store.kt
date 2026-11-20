@@ -61,6 +61,16 @@ class Store(context: Context) {
         }
         set(v) = prefs.edit().putString("reihenfolge", org.json.JSONArray(v).toString()).apply()
 
+    /** Vom Nutzer festgelegte Abteilungen: Artikelname (klein) → Abteilung. */
+    var gelernteKategorien: Map<String, String>
+        get() = try {
+            val o = org.json.JSONObject(prefs.getString("gelernteKategorien", null) ?: "{}")
+            o.keys().asSequence().associateWith { o.getString(it) }.filterValues { it in KAT_NAMEN }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        set(v) = prefs.edit().putString("gelernteKategorien", org.json.JSONObject(v).toString()).apply()
+
     var modell: String
         get() = prefs.getString("modell", STANDARD_MODELL)?.ifBlank { STANDARD_MODELL } ?: STANDARD_MODELL
         set(v) = prefs.edit().putString("modell", v).apply()
