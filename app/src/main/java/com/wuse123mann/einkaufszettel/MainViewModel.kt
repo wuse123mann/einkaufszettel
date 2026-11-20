@@ -318,6 +318,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Nur für den Screenshot-Test: Scan-Ansicht mit Beispieldaten anzeigen. */
+    @androidx.annotation.VisibleForTesting
+    fun demoScan(zustand: ScanState, p: Phase? = null) {
+        scan = zustand
+        phase = p
+        scanStart = System.currentTimeMillis() - 6_000
+    }
+
     fun updateReview(id: String, change: (ReviewItem) -> ReviewItem) {
         val s = scan as? ScanState.Review ?: return
         scan = s.copy(items = s.items.map { if (it.id == id) change(it) else it })

@@ -16,6 +16,9 @@ android {
         targetSdk = 35
         versionCode = buildNummer
         versionName = "1.0.$buildNummer"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Screenshots aus dem Test werden über den Test-Storage-Dienst eingesammelt
+        testInstrumentationRunnerArguments["useTestStorageService"] = "true"
         // nur Handy-Prozessoren: halbiert die APK-Größe (Offline-Texterkennung)
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -69,6 +72,16 @@ dependencies {
     // Offline-Texterkennung (läuft komplett am Handy, kein Konto nötig)
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Screenshot-Test (läuft im Emulator auf GitHub, siehe .github/workflows/screenshots.yml)
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.services:storage:1.5.0")
+    androidTestUtil("androidx.test.services:test-services:1.5.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     // Netzwerk-Stack von Chrome (QUIC/HTTP3) über die Google-Play-Dienste
     implementation("com.google.android.gms:play-services-cronet:18.1.0")
