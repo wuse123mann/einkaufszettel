@@ -87,4 +87,37 @@ class Store(context: Context) {
     var modell: String
         get() = prefs.getString("modell", STANDARD_MODELL)?.ifBlank { STANDARD_MODELL } ?: STANDARD_MODELL
         set(v) = prefs.edit().putString("modell", v).apply()
+
+    // ---------- geteilter Nextcloud-Ordner ----------
+
+    /**
+     * Der Freigabelink des geteilten Ordners, so wie Nextcloud ihn anzeigt.
+     *
+     * Beim Wechsel auf einen anderen Ordner wird [wolkeStand] zurückgesetzt: Dort liegen andere
+     * Zettel mit anderen Namen, und ein Stand aus dem alten Ordner würde beliebig viele davon
+     * überspringen.
+     */
+    var wolkeLink: String
+        get() = prefs.getString("wolkeLink", "") ?: ""
+        set(v) {
+            val neu = v.trim()
+            if (neu == wolkeLink) return
+            prefs.edit().putString("wolkeLink", neu).remove("wolkeStand").apply()
+        }
+
+    var wolkePasswort: String
+        get() = prefs.getString("wolkePasswort", "") ?: ""
+        set(v) = prefs.edit().putString("wolkePasswort", v.trim()).apply()
+
+    /**
+     * Dateiname des letzten verarbeiteten Zettels aus dem Posteingang.
+     *
+     * Die Namen beginnen mit der Zeit, sind also aufsteigend vergleichbar. Alles, was nicht danach
+     * kommt, ist erledigt – auch dann, wenn das Löschen im Ordner nicht geklappt hat.
+     */
+    var wolkeStand: String
+        get() = prefs.getString("wolkeStand", "") ?: ""
+        set(v) = prefs.edit().putString("wolkeStand", v).apply()
+
+    val wolkeAn: Boolean get() = wolkeLink.isNotBlank()
 }

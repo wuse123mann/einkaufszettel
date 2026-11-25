@@ -61,6 +61,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         listen = neu
         viewModelScope.launch(Dispatchers.IO) {
             saveLock.withLock { store.saveListen(neu) }
+            hochladen(neu)
         }
     }
 
@@ -171,6 +172,86 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // alte Kamerafotos aufräumen
         fotoDir.listFiles()?.forEach { it.delete() }
         Http.init(app)
+        // Der Abgleich wird nicht hier angestoßen: Dieser Block läuft vor den Feldern darunter, und
+        // wolkeLaeuft wäre noch nicht angelegt. Die Oberfläche stößt ihn beim Öffnen an – was auch
+        // besser passt, weil das bei jedem Zurückkehren zur App gilt und nicht nur einmal.
+    }
+
+    // ---------- geteilter Nextcloud-Ordner ----------
+
+    var wolkeLink by mutableStateOf(store.wolkeLink)
+        private set
+    var wolkePasswort by mutableStateOf(store.wolkePasswort)
+        private set
+    var wolkeStatus by mutableStateOf<String?>(null)
+        private set
+    var wolkeFehler by mutableStateOf(false)
+        private set
+    var wolkeLaeuft by mutableStateOf(false)
+        private set
+
+    val wolkeAn: Boolean get() = wolkeLink.isNotBlank()
+
+    fun updateWolkeLink(v: String) {
+        wolkeLink = v.trim()
+        store.wolkeLink = wolkeLink
+        wolkeStatus = null
+        wolkeFehler = false
+    }
+
+    fun updateWolkePasswort(v: String) {
+        wolkePasswort = v.trim()
+        store.wolkePasswort = wolkePasswort
+        wolkeStatus = null
+        wolkeFehler = false
+    }
+
+    /**
+     * Einen Abgleich anstoßen. Läuft im Hintergrund und blockiert nie die Liste – eine Einkaufsliste
+     * muss im Supermarkt auch ohne Empfang benutzbar bleiben.
+     *
+     * @param vonHand steuert nur die Rückmeldung: Beim Öffnen der App soll nicht jedes Mal „Nichts
+     *   Neues“ aufpoppen, auf Knopfdruck erwartet man aber eine Antwort.
+     */
+    fun abgleichenImHintergrund(vonHand: Boolean = true) {
+        if (!store.wolkeAn || wolkeLaeuft) return
+        wolkeLaeuft = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val ergebnis = abgleichen(
+                store = store,
+                listen = listen,
+                katFuer = { name -> katFuer(name, guessKat(name)) },
+                speichernLokal = { neu -> store.saveListen(neu) },
+            )
+            withContext(Dispatchers.Main) {
+                wolkeLaeuft = false
+                wolkeFehler = ergebnis.fehler
+                if (ergebnis.uebernommen > 0) uebernehmen(ergebnis.listen)
+                wolkeStatus = ergebnis.meldung ?: if (vonHand) "Nichts Neues vom Spiegel" else null
+                // Eingeblendet wird nur, was jemanden interessiert: übernommene Einträge immer,
+                // ein Fehler nur, wenn man selbst auf den Knopf gedrückt hat. Sonst meldete sich
+                // die App bei jedem Öffnen ohne Empfang.
+                val lohnt = ergebnis.uebernommen > 0 || (vonHand && ergebnis.meldung != null)
+                if (lohnt) ergebnis.meldung?.let { meldung = it }
+            }
+        }
+    }
+
+    /** Vom Abgleich zusammengeführte Listen in die Anzeige holen, ohne sie erneut hochzuladen. */
+    private fun uebernehmen(neu: List<Liste>) {
+        listen = neu
+        items = neu.firstOrNull { it.id == aktiveId }?.items ?: neu.first().items
+        if (neu.none { it.id == aktiveId }) aktiveId = neu.first().id
+    }
+
+    /** Den eigenen Stand in den Ordner legen. Fehler sind hier still: Es wird beim nächsten Mal wieder versucht. */
+    private fun hochladen(neu: List<Liste>) {
+        if (!store.wolkeAn) return
+        try {
+            Wolke(store.wolkeLink, store.wolkePasswort).schreiben(WOLKE_LISTE, listenToJson(neu))
+        } catch (_: Exception) {
+            // Kein Netz, falsches Passwort – der nächste Abgleich holt es nach.
+        }
     }
 
     /** Reihenfolge der Online-Dienste: gewählter zuerst, der andere springt ein (falls Schlüssel vorhanden). */

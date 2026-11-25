@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
@@ -161,6 +162,14 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                             }
                             context.startActivity(Intent.createChooser(send, "Liste teilen"))
                         }) { Icon(Icons.Filled.Share, contentDescription = "Liste teilen") }
+                    }
+                    // Nur sichtbar, wenn ein geteilter Ordner eingetragen ist: Im Supermarkt will
+                    // man nachsehen können, ob noch etwas vom Spiegel dazugekommen ist.
+                    if (vm.wolkeAn) {
+                        IconButton(
+                            onClick = { vm.abgleichenImHintergrund() },
+                            enabled = !vm.wolkeLaeuft,
+                        ) { Icon(Icons.Filled.Refresh, contentDescription = "Mit dem Spiegel abgleichen") }
                     }
                     IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, contentDescription = "Einstellungen") }
                 },
@@ -813,6 +822,8 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     var groqModellText by rememberSaveable { mutableStateOf(vm.groqModell) }
     var keyText by rememberSaveable { mutableStateOf(vm.apiKey) }
     var modellText by rememberSaveable { mutableStateOf(vm.modell) }
+    var wolkeLinkText by rememberSaveable { mutableStateOf(vm.wolkeLink) }
+    var wolkePasswortText by rememberSaveable { mutableStateOf(vm.wolkePasswort) }
 
     Scaffold(
         topBar = {
@@ -927,6 +938,45 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { vm.reihenfolgeSetzen(HOFER_REIHENFOLGE) }) { Text("Hofer-Vorlage") }
                 OutlinedButton(onClick = { vm.reihenfolgeSetzen(KAT_NAMEN) }) { Text("Standard") }
+            }
+
+            // ---------- Geteilter Ordner ----------
+            Spacer(Modifier.height(24.dp))
+            Text("Liste mit dem Spiegel teilen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Trag einen freigegebenen Nextcloud-Ordner ein, dann landet „Kauz, merk dir Milch“ an " +
+                    "der Wohnungstür in dieser Liste. Der Ordner muss als öffentlicher Link mit " +
+                    "„Bearbeiten erlauben“ geteilt sein; setz dabei ein Freigabepasswort.",
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = wolkeLinkText,
+                onValueChange = { wolkeLinkText = it; vm.updateWolkeLink(it) },
+                label = { Text("Freigabelink") },
+                supportingText = { Text("z. B. https://cloud.example.org/s/AbC123 – leer lassen schaltet das Teilen ab") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
+            SchluesselFeld("Freigabepasswort", wolkePasswortText) {
+                wolkePasswortText = it
+                vm.updateWolkePasswort(it)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { vm.abgleichenImHintergrund() },
+                enabled = vm.wolkeAn && !vm.wolkeLaeuft,
+            ) { Text(if (vm.wolkeLaeuft) "Gleicht ab …" else "Jetzt abgleichen") }
+            vm.wolkeStatus?.let { stand ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stand,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (vm.wolkeFehler) cs.error else cs.onSurfaceVariant,
+                )
             }
 
             // ---------- Fortgeschritten ----------

@@ -222,6 +222,27 @@ Gemüse:
 
 ---
 
+## Liste mit dem Spiegel teilen
+
+An der Wohnungstür fällt einem ein, was fehlt — und dort sagt niemand „Setz Milch auf die Einkaufsliste“. Mit einem geteilten Nextcloud-Ordner genügt **„Kauz, merk dir Milch“** am Smart-Mirror im Vorzimmer, und im Hofer steht es hier auf der Liste.
+
+**Einrichten:**
+
+1. In Nextcloud einen Ordner anlegen, z. B. `Einkaufsliste`.
+2. Als **öffentlichen Link** teilen, dabei **„Bearbeiten erlauben“** anhaken und ein **Freigabepasswort** setzen.
+3. Den Link (`https://cloud…/s/AbC123`) und das Passwort in *Einstellungen → Liste mit dem Spiegel teilen* eintragen.
+4. Beim Sprachassistenten denselben Link eintragen — siehe [`docs/einkaufsordner.md`](https://github.com/wuse123mann/kauz2/blob/update-kauz/docs/einkaufsordner.md) im Kauz-Repo.
+
+Abgeglichen wird beim Öffnen der App und über das ⟳ in der Titelzeile. Leeres Linkfeld schaltet das Teilen ab.
+
+**Wie es ohne Konflikte geht:** Jede Datei im Ordner hat genau einen Schreiber. `listen.json` gehört dieser App; der Assistent liest sie nur. Der Ordner `posteingang/` gehört ihm; pro Zuruf landet dort eine Datei von achtzig Byte, die diese App übernimmt und wegräumt. So begegnen sich die Schreibvorgänge nie, und keiner überschreibt still die Änderung des anderen. Die Reihenfolge der Zettel steckt im Dateinamen und wird eingehalten — „dazu Milch, weg Milch, dazu Milch“ endet mit Milch auf der Liste.
+
+Die Liste bleibt dabei lokal die Wahrheit: Ohne Empfang funktioniert alles weiter, abgeglichen wird, sobald es wieder geht.
+
+**Zu beachten:** Ein öffentlich beschreibbarer Link ist öffentlich beschreibbar — wer die URL hat, liest und schreibt diesen Ordner. Darum das Freigabepasswort, und nichts anderes als die Einkaufsliste hineinlegen.
+
+---
+
 ## Fehlerbehebung
 
 | Meldung | Ursache | Lösung |

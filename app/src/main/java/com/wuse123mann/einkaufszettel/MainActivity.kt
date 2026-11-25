@@ -32,6 +32,18 @@ class MainActivity : ComponentActivity() {
         handleShare(intent)
     }
 
+    /**
+     * Beim Zurückkehren zur App mit dem geteilten Ordner abgleichen.
+     *
+     * Hier und nicht im ViewModel: Das wird einmal je Lebensdauer des ViewModels aufgebaut, und
+     * wer das Handy aus der Tasche holt, erwartet die Liste von jetzt – nicht die von gestern.
+     * Der Abgleich läuft im Hintergrund und hält die Liste nie auf.
+     */
+    override fun onResume() {
+        super.onResume()
+        vm.abgleichenImHintergrund(vonHand = false)
+    }
+
     /** Bilder, die per „Teilen“ aus der Galerie o. ä. kommen. */
     private fun handleShare(intent: Intent?) {
         if (intent == null) return
