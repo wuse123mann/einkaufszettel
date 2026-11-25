@@ -1,34 +1,25 @@
 package com.wuse123mann.einkaufszettel
 
 /**
- * Abgleich mit dem geteilten Nextcloud-Ordner.
+ * Die Rechenregeln für den Abgleich mit dem geteilten Nextcloud-Ordner – ohne Netz und ohne Datei.
  *
- * **Ein Schreiber je Datei** – das ist die Regel, auf der das Ganze steht. `listen.json` gehört
- * dieser App; der Sprachassistent liest sie und fasst sie nie an. Umgekehrt gehört `posteingang/`
- * ihm, und diese App holt die Zettel dort ab und räumt sie weg. Die beiden Schreibvorgänge begegnen
- * sich nie, darum braucht es weder Sperre noch ETag – und keiner verliert still eine Änderung.
+ * Der Ablauf drumherum (abholen, sichern, hochladen, wegräumen) steckt in
+ * [MainViewModel.abgleichenImHintergrund]; hier steht nur, *was* ein Zettel bedeutet. Getrennt, weil
+ * das Zusammenführen auf dem Hauptthread gegen den frischesten Stand laufen muss und die
+ * Netzzugriffe eben nicht.
+ *
+ * **Ein Schreiber je Datei** ist die Regel, auf der das Ganze steht. `listen.json` gehört dieser
+ * App; der Sprachassistent liest sie und fasst sie nie an. Umgekehrt gehört `posteingang/` ihm, und
+ * diese App holt die Zettel dort ab und räumt sie weg. Die beiden Schreibvorgänge begegnen sich
+ * nie, darum braucht es weder Sperre noch ETag – und keiner verliert still eine Änderung.
  *
  * **Die Reihenfolge der Zettel ist bedeutungstragend.** Sie steckt im Dateinamen, und „dazu Milch,
  * weg Milch, dazu Milch“ endet mit Milch auf der Liste. Wer erst alle Zusätze und dann alle
  * Streichungen anwendet, bekommt das Gegenteil heraus.
- *
- * **Angewendet wird jeder Zettel genau einmal.** Dafür merkt sich die App in [Store.wolkeStand] den
- * Dateinamen des letzten verarbeiteten Zettels und überspringt alles, was nicht danach kommt. Sich
- * stattdessen darauf zu verlassen, dass das Löschen klappt, wäre riskant: Bleibt ein `leeren`-Zettel
- * liegen, weil das DELETE scheiterte, würde er beim nächsten Öffnen die Liste noch einmal leeren –
- * samt allem, was inzwischen dazugekommen ist.
  */
 
-/** Was ein Abgleich gebracht hat. */
-data class AbgleichErgebnis(
-    val listen: List<Liste>,
-    val uebernommen: Int,
-    val meldung: String?,
-    val fehler: Boolean = false,
-)
-
 /**
- * Die Zettel der Reihe nach auf die Listen anwenden. Reine Funktion – kein Netz, keine Datei.
+ * Die Zettel der Reihe nach auf die Listen anwenden. Reine Funktion.
  *
  * @param katFuer bestimmt die Abteilung für einen Artikelnamen (die gelernte, sonst die geratene).
  */
@@ -56,7 +47,8 @@ fun zettelAnwenden(
  * Einen Artikel ergänzen – und nichts tun, wenn er schon offen auf der Liste steht.
  *
  * Das „nichts tun“ ist nicht nur Bequemlichkeit: Bleibt ein Zettel liegen, weil das Löschen
- * scheiterte, darf er beim nächsten Mal keinen zweiten Eintrag erzeugen.
+ * scheiterte, darf er beim nächsten Mal keinen zweiten Eintrag erzeugen. Abgehaktes zählt dabei
+ * nicht – was gekauft ist, darf wieder gebraucht werden.
  */
 private fun dazuTun(items: List<Item>, roh: String, katFuer: (String) -> String): List<Item> {
     val (name, menge) = parseEntry(roh)
@@ -73,63 +65,8 @@ private fun passtZu(item: Item, roh: String): Boolean {
         item.name.equals(roh.trim(), ignoreCase = true)
 }
 
-/**
- * Ein Durchgang: abholen, anwenden, sichern, hochladen, wegräumen – in genau dieser Reihenfolge.
- *
- * Erst lokal sichern, dann den Stand weiterstellen: Sonst wäre ein Zettel als verarbeitet vermerkt,
- * dessen Inhalt noch nirgends steht, und „Kauz, merk dir Milch“ wäre lautlos verloren. Hochladen
- * kommt vor dem Löschen, damit der Ordner auch dann den zusammengeführten Stand zeigt, wenn das
- * Wegräumen scheitert.
- *
- * @param speichernLokal muss die Listen sofort und blockierend auf das Gerät schreiben.
- */
-fun abgleichen(
-    store: Store,
-    listen: List<Liste>,
-    katFuer: (String) -> String,
-    speichernLokal: (List<Liste>) -> Unit,
-): AbgleichErgebnis {
-    val link = store.wolkeLink
-    if (link.isBlank()) return AbgleichErgebnis(listen, 0, null)
-
-    val wolke = try {
-        Wolke(link, store.wolkePasswort)
-    } catch (e: WolkeFehler) {
-        return AbgleichErgebnis(listen, 0, e.message, fehler = true)
-    }
-
-    val zettel = try {
-        wolke.zettelHolen(store.wolkeStand)
-    } catch (e: WolkeFehler) {
-        return AbgleichErgebnis(listen, 0, e.message, fehler = true)
-    }
-
-    var neu = listen
-    if (zettel.isNotEmpty()) {
-        neu = zettelAnwenden(listen, zettel, katFuer)
-        speichernLokal(neu)
-        store.wolkeStand = zettel.maxOf { it.datei }
-    }
-
-    try {
-        wolke.schreiben(WOLKE_LISTE, listenToJson(neu))
-    } catch (e: WolkeFehler) {
-        // Die Zettel sind übernommen und lokal gesichert; nur der Ordner hinkt bis zum nächsten Mal nach.
-        return AbgleichErgebnis(neu, zettel.size, e.message, fehler = true)
-    }
-
-    for (z in zettel) {
-        try {
-            wolke.loeschen("$WOLKE_POSTEINGANG/${z.datei}")
-        } catch (_: WolkeFehler) {
-            // Bleibt liegen; der Stand verhindert, dass er noch einmal angewendet wird.
-        }
-    }
-
-    return AbgleichErgebnis(neu, zettel.size, meldungFuer(zettel.size))
-}
-
-private fun meldungFuer(anzahl: Int): String? = when (anzahl) {
+/** Was in der Einblendung steht, wenn Zettel übernommen wurden. */
+fun uebernahmeMeldung(anzahl: Int): String? = when (anzahl) {
     0 -> null
     1 -> "Ein Eintrag vom Spiegel übernommen"
     else -> "$anzahl Einträge vom Spiegel übernommen"

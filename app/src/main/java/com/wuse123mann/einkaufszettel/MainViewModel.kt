@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,8 +62,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         listen = neu
         viewModelScope.launch(Dispatchers.IO) {
             saveLock.withLock { store.saveListen(neu) }
-            hochladen(neu)
         }
+        hochladenGebuendelt(neu)
     }
 
     fun listeWaehlen(id: String) {
@@ -210,47 +211,113 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Einen Abgleich anstoßen. Läuft im Hintergrund und blockiert nie die Liste – eine Einkaufsliste
      * muss im Supermarkt auch ohne Empfang benutzbar bleiben.
      *
+     * Die Schrittfolge ist mit Bedacht so und nicht anders:
+     *
+     *  1. **Abholen** (Netz). Nur lesen, nichts verändern.
+     *  2. **Zusammenführen** – auf dem Hauptthread, gegen [listen] von *jetzt*. Gegen einen
+     *     Schnappschuss von vor dem Netzzugriff zu rechnen wäre falsch: Wer in der Zwischenzeit
+     *     etwas abhakt, verlöre das wieder, weil das Ergebnis es überschreibt.
+     *  3. **Lokal sichern**, und erst danach den Stand weiterstellen. Umgekehrt wäre ein Zettel als
+     *     verarbeitet vermerkt, dessen Inhalt noch nirgends steht – „Kauz, merk dir Milch“ wäre
+     *     lautlos verloren.
+     *  4. **Hochladen**, dann **wegräumen**. In dieser Reihenfolge, damit der Ordner auch dann den
+     *     zusammengeführten Stand zeigt, wenn das Löschen scheitert.
+     *
      * @param vonHand steuert nur die Rückmeldung: Beim Öffnen der App soll nicht jedes Mal „Nichts
      *   Neues“ aufpoppen, auf Knopfdruck erwartet man aber eine Antwort.
      */
     fun abgleichenImHintergrund(vonHand: Boolean = true) {
         if (!store.wolkeAn || wolkeLaeuft) return
         wolkeLaeuft = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val ergebnis = abgleichen(
-                store = store,
-                listen = listen,
-                katFuer = { name -> katFuer(name, guessKat(name)) },
-                speichernLokal = { neu -> store.saveListen(neu) },
-            )
-            withContext(Dispatchers.Main) {
-                wolkeLaeuft = false
-                wolkeFehler = ergebnis.fehler
-                if (ergebnis.uebernommen > 0) uebernehmen(ergebnis.listen)
-                wolkeStatus = ergebnis.meldung ?: if (vonHand) "Nichts Neues vom Spiegel" else null
-                // Eingeblendet wird nur, was jemanden interessiert: übernommene Einträge immer,
-                // ein Fehler nur, wenn man selbst auf den Knopf gedrückt hat. Sonst meldete sich
-                // die App bei jedem Öffnen ohne Empfang.
-                val lohnt = ergebnis.uebernommen > 0 || (vonHand && ergebnis.meldung != null)
-                if (lohnt) ergebnis.meldung?.let { meldung = it }
+        viewModelScope.launch {
+            val wolke = try {
+                Wolke(store.wolkeLink, store.wolkePasswort)
+            } catch (e: WolkeFehler) {
+                melde(vonHand, e.message, fehler = true)
+                return@launch
             }
+
+            val post = try {
+                withContext(Dispatchers.IO) { wolke.zettelHolen(store.wolkeStand) }
+            } catch (e: WolkeFehler) {
+                melde(vonHand, e.message, fehler = true)
+                return@launch
+            }
+
+            // Zusammenführen auf dem Hauptthread, gegen den frischesten Stand
+            val neu = if (post.zettel.isEmpty()) listen
+            else zettelAnwenden(listen, post.zettel, { name -> katFuer(name, guessKat(name)) })
+            if (post.zettel.isNotEmpty()) uebernehmen(neu)
+
+            val fehlertext = withContext(Dispatchers.IO) {
+                if (post.erledigt.isNotEmpty()) {
+                    saveLock.withLock { store.saveListen(neu) }
+                    store.wolkeStand = post.erledigt.max()
+                }
+                try {
+                    wolke.schreiben(WOLKE_LISTE, listenToJson(neu))
+                } catch (e: WolkeFehler) {
+                    // Die Zettel sind übernommen und gesichert; nur der Ordner hinkt nach.
+                    return@withContext e.message
+                }
+                for (datei in post.erledigt) {
+                    try {
+                        wolke.loeschen("$WOLKE_POSTEINGANG/$datei")
+                    } catch (_: WolkeFehler) {
+                        // Bleibt liegen; der Stand verhindert, dass er noch einmal angewendet wird.
+                    }
+                }
+                null
+            }
+
+            melde(vonHand, fehlertext ?: uebernahmeMeldung(post.zettel.size), fehler = fehlertext != null,
+                  uebernommen = post.zettel.size)
         }
+    }
+
+    /**
+     * Ergebnis eines Abgleichs anzeigen.
+     *
+     * Eingeblendet wird nur, was jemanden interessiert: übernommene Einträge immer, ein Fehler nur,
+     * wenn man selbst auf den Knopf gedrückt hat. Sonst meldete sich die App bei jedem Öffnen ohne
+     * Empfang. In den Einstellungen steht der Stand trotzdem.
+     */
+    private fun melde(vonHand: Boolean, text: String?, fehler: Boolean, uebernommen: Int = 0) {
+        wolkeLaeuft = false
+        wolkeFehler = fehler
+        wolkeStatus = text ?: if (vonHand) "Nichts Neues vom Spiegel" else null
+        if (text != null && (uebernommen > 0 || vonHand)) meldung = text
     }
 
     /** Vom Abgleich zusammengeführte Listen in die Anzeige holen, ohne sie erneut hochzuladen. */
     private fun uebernehmen(neu: List<Liste>) {
         listen = neu
-        items = neu.firstOrNull { it.id == aktiveId }?.items ?: neu.first().items
         if (neu.none { it.id == aktiveId }) aktiveId = neu.first().id
+        items = neu.firstOrNull { it.id == aktiveId }?.items ?: neu.first().items
     }
 
-    /** Den eigenen Stand in den Ordner legen. Fehler sind hier still: Es wird beim nächsten Mal wieder versucht. */
-    private fun hochladen(neu: List<Liste>) {
+    /**
+     * Den eigenen Stand in den Ordner legen – gebündelt.
+     *
+     * Jede einzelne Änderung hochzuladen hieße: zwanzig Häkchen im Supermarkt, zwanzig
+     * Netzzugriffe. Darum wartet der Upload kurz und läuft nur, wenn eine Weile nichts mehr
+     * passiert ist. Geht die App vorher zu, bleibt der lokale Stand erhalten und der nächste
+     * Abgleich schiebt ihn nach.
+     */
+    private var hochladeJob: Job? = null
+
+    private fun hochladenGebuendelt(neu: List<Liste>) {
         if (!store.wolkeAn) return
-        try {
-            Wolke(store.wolkeLink, store.wolkePasswort).schreiben(WOLKE_LISTE, listenToJson(neu))
-        } catch (_: Exception) {
-            // Kein Netz, falsches Passwort – der nächste Abgleich holt es nach.
+        hochladeJob?.cancel()
+        hochladeJob = viewModelScope.launch {
+            delay(1500)
+            withContext(Dispatchers.IO) {
+                try {
+                    Wolke(store.wolkeLink, store.wolkePasswort).schreiben(WOLKE_LISTE, listenToJson(neu))
+                } catch (_: Exception) {
+                    // Kein Netz, falsches Passwort – der nächste Abgleich holt es nach.
+                }
+            }
         }
     }
 

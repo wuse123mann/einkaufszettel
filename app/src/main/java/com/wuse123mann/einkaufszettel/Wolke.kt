@@ -188,26 +188,40 @@ class Wolke(link: String, private val passwort: String = "") {
 // -------------------------------------------------------------------- Posteingang
 
 /**
+ * Was ein Blick in den Posteingang ergeben hat.
+ *
+ * [erledigt] ist absichtlich mehr als die Dateinamen in [zettel]: Ein Zettel, der sich herunterladen
+ * ließ, aber kein brauchbares JSON enthält, ist erledigt – er wird nie besser. Stünde er nicht hier
+ * drin, bliebe er für immer liegen und würde bei jedem Abgleich erneut geholt. Ein Zettel, der sich
+ * gar nicht laden ließ (kein Netz mitten im Durchgang), fehlt dagegen in beiden Listen und kommt
+ * beim nächsten Mal wieder dran.
+ */
+data class Posteingang(val zettel: List<Zettel>, val erledigt: List<String>)
+
+/**
  * Die Zettel aus dem Posteingang, älteste zuerst.
  *
  * Die Reihenfolge steckt im Dateinamen (Zeit mit Mikrosekunden), darum genügt sortieren. Sie ist
  * bedeutungstragend: „dazu Milch, weg Milch, dazu Milch“ endet mit Milch auf der Liste.
  *
- * @param ab nur Zettel, deren Dateiname größer ist – siehe [Abgleich.stand].
+ * @param ab nur Zettel, deren Dateiname größer ist – siehe [Store.wolkeStand].
  */
-fun Wolke.zettelHolen(ab: String = ""): List<Zettel> {
+fun Wolke.zettelHolen(ab: String = ""): Posteingang {
     val dateien = auflisten(WOLKE_POSTEINGANG).filter { it.endsWith(".json") && it > ab }
     val zettel = ArrayList<Zettel>()
+    val erledigt = ArrayList<String>()
     for (datei in dateien) {
         val roh = try {
             holen("$WOLKE_POSTEINGANG/$datei")
         } catch (_: WolkeFehler) {
-            continue                      // ein einzelner Zettel darf den Abgleich nicht aufhalten
-        } ?: continue
+            continue                      // nicht ladbar: beim nächsten Durchgang noch einmal
+        }
+        erledigt.add(datei)               // geladen – ob verständlich oder nicht
+        if (roh == null) continue         // inzwischen weg (das Handy war schneller)
         val o = try {
             JSONObject(roh)
         } catch (_: Exception) {
-            continue                      // unleserlich: überspringen, aber als erledigt behandeln
+            continue                      // unleserlich: wird nie besser, gilt als abgearbeitet
         }
         val aktion = o.optString("aktion", "dazu")
         val name = o.optString("name", "").trim()
@@ -215,5 +229,5 @@ fun Wolke.zettelHolen(ab: String = ""): List<Zettel> {
             zettel.add(Zettel(datei, aktion, name, o.optString("liste", "").trim()))
         }
     }
-    return zettel
+    return Posteingang(zettel, erledigt)
 }
