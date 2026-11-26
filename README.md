@@ -27,6 +27,7 @@ Einkaufszettel ist eine Android-App, die deinen Zettel (oder mehrere) per KI lie
   - [Reihenfolge im Geschäft (Laufweg)](#5-reihenfolge-im-geschäft-laufweg)
   - [Mehrere Listen](#6-mehrere-listen)
   - [Liste teilen](#7-liste-teilen)
+  - [Hofer-Preise](#8-hofer-preise)
 - [Abteilungen](#abteilungen)
 - [Fehlerbehebung](#fehlerbehebung)
 - [Datenschutz](#datenschutz)
@@ -44,6 +45,7 @@ Einkaufszettel ist eine Android-App, die deinen Zettel (oder mehrere) per KI lie
 | ✏️ **Prüfen vor dem Übernehmen** | Schwer lesbare Wörter sind gelb markiert, Namen und Mengen lassen sich korrigieren |
 | 🗂️ **Nach Laufweg sortiert** | Liste nach Abteilungen in der Reihenfolge deines Geschäfts – Vorlage für **Hofer**, frei anpassbar |
 | 🧠 **Lernt dazu** | Schiebst du „Sauerrahm“ einmal zu „Milch & Käse“, landet er dort auch beim nächsten Scan |
+| 💶 **Hofer-Preise** | Preis zu jedem Artikel und geschätzte Summe – direkt aus dem Hofer-Sortiment auf hofer.at, Produkt per Antippen änderbar |
 | 📝 **Mehrere Listen** | z. B. „Wocheneinkauf“, „Grillfest“, „Drogerie“ – anlegen, wechseln, umbenennen, löschen |
 | ✅ **Abhaken** | Antippen = in den Wagen, Löschen mit „Rückgängig“, Fortschrittsbalken |
 | 📤 **Teilen** | Offene Artikel als Text an WhatsApp, Signal & Co. |
@@ -201,6 +203,18 @@ Gemüse:
 …
 ```
 
+### 8. Hofer-Preise
+
+Neben jedem Artikel steht der **Hofer-Preis**, oben im Titel und unten in der Liste die **geschätzte Summe** (*noch zu kaufen*, *im Wagen*, *gesamt*).
+
+- **Woher:** Die App lädt das Hofer-Sortiment direkt von **hofer.at** (alle Produktkategorien, je 60 Produkte pro Seite) und speichert es am Handy. Beim ersten Öffnen und danach **einmal pro Woche** automatisch, sonst unter *Einstellungen → Hofer-Preise → Jetzt aktualisieren*.
+- **Zuordnung:** Die App sucht zu jedem Artikel das passendste Hofer-Produkt (Name, Abteilung, Reihenfolge bei Hofer). Automatisch zugeordnete Produkte sind mit **≈** markiert, z. B. *≈ MILSANI Frische Vollmilch 3,5% Fett*.
+- **Ändern:** Auf den **Preis tippen** → im Hofer-Sortiment suchen und das richtige Produkt wählen. Die Wahl wird für diesen Artikel **gemerkt**, auch auf künftigen Listen. **„Ohne Preis“** blendet den Preis aus, **„Automatisch“** überlässt die Wahl wieder der App.
+- **Menge:** Bei Stückzahlen (`2`, `6x`, `3 Stk`, `2 Dosen`) wird der Preis multipliziert, bei Gewichten und Litern nicht.
+- **Ein- und ausschalten:** *Einstellungen → Hofer-Preise → Preise anzeigen*.
+
+> Preise ohne Gewähr: Aktionspreise in der Filiale, Obst und Gemüse nach Gewicht sowie Pfand können abweichen. Hofer schützt seine Website gegen Bots; die App ruft sie deshalb wie Chrome am Handy auf und weicht notfalls auf ein unsichtbares Browserfenster aus.
+
 ---
 
 ## Abteilungen
@@ -294,6 +308,7 @@ app/src/main/java/com/wuse123mann/einkaufszettel/
 ├── Model.kt            Item, Liste, Abteilungen, Stichwort-Zuordnung, Mengen-Erkennung, Hofer-Laufweg, JSON
 ├── Store.kt            Speichern/Laden der Listen und Einstellungen (inkl. Übernahme alter Daten)
 ├── Recognizer.kt       Gemini-Anbindung, Prompt, Antwort-Auswertung, Offline-Leser (ML Kit), Bild laden
+├── Hofer.kt            Hofer-Sortiment von hofer.at laden (Kategorieseiten, Bot-Schutz-Ausweich per WebView), Kacheln auslesen, Produkte zuordnen
 ├── Groq.kt             Groq-Anbindung (Bildmodelle, max. 3 Bilder pro Anfrage, Modell-Ausweich)
 └── Netz.kt             HTTP über Cronet/OkHttp mit Upload-Fortschritt, Ausweich-DNS (DNS-over-HTTPS)
 
@@ -341,7 +356,9 @@ Manche Handys bzw. Netze hatten Probleme, die Google-API zu erreichen (Zeitüber
 ]
 ```
 
-Einstellungen (`SharedPreferences` „einstellungen“): `dienst`, `groqKey`, `groqModell`, `apiKey` (Gemini), `modell`, `reihenfolge` (JSON-Array), `gelernteKategorien` (JSON-Objekt *Artikelname → Abteilung*), `aktiveListe`.
+Hofer-Sortiment: `files/hofer.json` (`stand` + Produkte mit Name, Marke, Größe, Preis, Grundpreis, Abteilung, URL).
+
+Einstellungen (`SharedPreferences` „einstellungen“): `preiseAn`, `preisWahl` (JSON-Objekt *Artikelname → Hofer-Produkt-URL*), `dienst`, `groqKey`, `groqModell`, `apiKey` (Gemini), `modell`, `reihenfolge` (JSON-Array), `gelernteKategorien` (JSON-Objekt *Artikelname → Abteilung*), `aktiveListe`.
 
 Ältere Daten werden beim Start automatisch übernommen: die frühere Einzel-Liste (`liste.json`) wird zur Liste „Einkaufsliste“, die alte Abteilung „Obst & Gemüse“ wird auf „Obst“ bzw. „Gemüse“ aufgeteilt.
 
@@ -384,3 +401,4 @@ Neu erzeugen: **Actions → Screenshots → Run workflow** (läuft außerdem aut
 | 1.0.14 | **Obst** und **Gemüse** getrennt |
 | 1.0.15 | **Mehrere Listen** |
 | 1.0.16+ | Dokumentation mit Screenshots, Screenshot-Test im Emulator |
+| neu | **Hofer-Preise** zu jedem Artikel, Summe, Produktwahl per Antippen |

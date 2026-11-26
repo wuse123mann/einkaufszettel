@@ -128,21 +128,30 @@ object Http {
         }
     }
 
-    fun get(url: String, kopf: Pair<String, String>): Pair<Int, String> = anfrage(url, kopf, null)
-    fun post(url: String, kopf: Pair<String, String>, body: String, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> =
-        anfrage(url, kopf, body, hochgeladen)
+    fun get(url: String, kopf: Pair<String, String>): Pair<Int, String> = anfrage(url, mapOf(kopf), null)
 
-    private fun anfrage(url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> {
+    /** Eine Webseite so abrufen, wie Chrome am Handy es täte (für die Hofer-Preise). */
+    fun seite(url: String): Pair<Int, String> = anfrage(url, BROWSER, null)
+
+    private val BROWSER = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language" to "de-AT,de;q=0.9,en;q=0.7",
+    )
+    fun post(url: String, kopf: Pair<String, String>, body: String, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> =
+        anfrage(url, mapOf(kopf), body, hochgeladen)
+
+    private fun anfrage(url: String, koepfe: Map<String, String>, body: String?, hochgeladen: ((Float) -> Unit)? = null): Pair<Int, String> {
         bereit.await(4, TimeUnit.SECONDS)
         val e = engine
         if (e != null) {
             try {
-                val r = cronet(e, url, kopf, body, hochgeladen)
+                val r = cronet(e, url, koepfe, body, hochgeladen)
                 letzterWeg = "Chrome-Netz"
                 return r
             } catch (cronetFehler: IOException) {
                 try {
-                    val r = ok(url, kopf, body, hochgeladen)
+                    val r = ok(url, koepfe, body, hochgeladen)
                     letzterWeg = "OkHttp"
                     return r
                 } catch (okFehler: IOException) {
@@ -151,19 +160,19 @@ object Http {
                 }
             }
         }
-        val r = ok(url, kopf, body, hochgeladen)
+        val r = ok(url, koepfe, body, hochgeladen)
         letzterWeg = "OkHttp"
         return r
     }
 
     private const val STUECK = 16 * 1024
 
-    private fun cronet(e: CronetEngine, url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
+    private fun cronet(e: CronetEngine, url: String, koepfe: Map<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
         val con = e.openConnection(URL(url)) as HttpURLConnection
         try {
             con.connectTimeout = 20_000
             con.readTimeout = 90_000
-            con.setRequestProperty(kopf.first, kopf.second)
+            koepfe.forEach { (k, v) -> con.setRequestProperty(k, v) }
             if (body != null) {
                 val bytes = body.toByteArray(Charsets.UTF_8)
                 con.requestMethod = "POST"
@@ -190,8 +199,9 @@ object Http {
         }
     }
 
-    private fun ok(url: String, kopf: Pair<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
-        val b = Request.Builder().url(url).header(kopf.first, kopf.second)
+    private fun ok(url: String, koepfe: Map<String, String>, body: String?, hochgeladen: ((Float) -> Unit)?): Pair<Int, String> {
+        val b = Request.Builder().url(url)
+        koepfe.forEach { (k, v) -> b.header(k, v) }
         if (body != null) b.post(FortschrittBody(body.toByteArray(Charsets.UTF_8), hochgeladen)) else b.get()
         return okhttp.newCall(b.build()).execute().use { it.code to (it.body?.string() ?: "") }
     }

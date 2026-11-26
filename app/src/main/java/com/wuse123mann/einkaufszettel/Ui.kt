@@ -94,6 +94,8 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
     var pendingPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var katItem by remember { mutableStateOf<Item?>(null) }
+    var preisItem by remember { mutableStateOf<Item?>(null) }
+    LaunchedEffect(Unit) { vm.preiseBeimStart() }
     var listenAuswahl by remember { mutableStateOf(false) }
     var neuText by rememberSaveable { mutableStateOf("") }
 
@@ -119,7 +121,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
         items.isEmpty() -> "Noch nichts auf der Liste"
         offen.isEmpty() -> "Alles erledigt – ${items.size} Artikel im Wagen 🎉"
         else -> "${offen.size} von ${items.size} noch offen"
-    }
+    } + vm.summe(offen).let { (betrag, n) -> if (n > 0) " · ca. ${euro(betrag)}" else "" }
 
     fun loeschen(item: Item) {
         val idx = vm.delete(item)
@@ -252,6 +254,33 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                     }
                 }
             }
+            if (vm.preiseAn && (vm.katalogLaeuft || vm.katalogAnzahl == 0)) {
+                item(key = "hofer") {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    ) {
+                        Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = if (vm.katalogLaeuft) 12.dp else 4.dp)) {
+                            Text(
+                                if (vm.katalogLaeuft) "Hofer-Preise werden geladen …" else "Hofer-Preise sind noch nicht geladen.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                            vm.katalogText?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                            if (vm.katalogLaeuft) {
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(progress = { vm.katalogFortschritt }, modifier = Modifier.fillMaxWidth().padding(end = 8.dp))
+                            } else {
+                                TextButton(onClick = { vm.katalogLaden() }, modifier = Modifier.align(Alignment.End)) { Text("Jetzt laden") }
+                            }
+                        }
+                    }
+                }
+            }
             item(key = "eingabe") {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -284,7 +313,7 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                     val g = offen.filter { it.kat == kat }
                     if (g.isEmpty()) continue
                     item(key = "kat_$kat") {
-                        Gruppe(kat, farbe, g, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it })
+                        Gruppe(kat, farbe, g, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it }, preis = { vm.preisFuer(it) }, onPreis = { preisItem = it })
                     }
                 }
                 if (erledigt.isNotEmpty()) {
@@ -299,12 +328,34 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
                         Karte {
                             erledigt.forEachIndexed { i, it ->
                                 if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                ItemRow(it, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it })
+                                ItemRow(it, onToggle = { vm.toggle(it.id) }, onDelete = { loeschen(it) }, onLongPress = { katItem = it }, preis = vm.preisFuer(it), onPreis = { preisItem = it })
                             }
                         }
                     }
                 }
                 item(key = "alles_loeschen") {
+                    val (offenSumme, offenN) = vm.summe(offen)
+                    val (wagenSumme, wagenN) = vm.summe(erledigt)
+                    if (offenN + wagenN > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                SummenZeile("Noch zu kaufen", offenSumme, fett = true)
+                                if (wagenN > 0) SummenZeile("Im Wagen", wagenSumme)
+                                SummenZeile("Gesamt", offenSumme + wagenSumme)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Hofer-Preise von hofer.at, ohne Gewähr – ${offenN + wagenN} von ${items.size} Artikeln mit Preis. Preis antippen, um das Produkt zu ändern.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     Text(
                         "Tipp: Artikel lange drücken, um ihn in eine andere Abteilung zu schieben.",
                         style = MaterialTheme.typography.bodySmall,
@@ -325,6 +376,10 @@ fun ListScreen(vm: MainViewModel, onSettings: () -> Unit) {
 
     if (listenAuswahl) {
         ListenSheet(vm, onClose = { listenAuswahl = false })
+    }
+
+    preisItem?.let { item ->
+        PreisSheet(vm, item, onClose = { preisItem = null })
     }
 
     katItem?.let { item ->
@@ -483,6 +538,101 @@ private fun ListenSheet(vm: MainViewModel, onClose: () -> Unit) {
 }
 
 @Composable
+private fun SummenZeile(text: String, betrag: Double, fett: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+        Text(text, modifier = Modifier.weight(1f), fontWeight = if (fett) FontWeight.SemiBold else FontWeight.Normal)
+        Text("ca. ${euro(betrag)}", fontWeight = if (fett) FontWeight.SemiBold else FontWeight.Normal)
+    }
+}
+
+/** Hofer-Produkt für einen Artikel wählen; die Wahl wird für diesen Artikelnamen gemerkt. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PreisSheet(vm: MainViewModel, item: Item, onClose: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    var suche by remember(item.id) { mutableStateOf(item.name) }
+    val aktuell = vm.preisFuer(item)
+    val treffer = remember(suche, vm.katalogAnzahl) { vm.kandidaten(suche, item.kat) }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = cs.surfaceContainerLowest,
+    ) {
+        Column(Modifier.fillMaxWidth().imePadding().padding(start = 18.dp, end = 18.dp, bottom = 16.dp)) {
+            Text("Hofer-Produkt für „${item.name}“", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "Die Wahl gilt für diesen Artikel – auch auf künftigen Listen.",
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            if (vm.katalogAnzahl == 0) {
+                Text(
+                    if (vm.katalogLaeuft) "Hofer-Preise werden gerade geladen …" else "Hofer-Preise sind noch nicht geladen.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (!vm.katalogLaeuft) {
+                    Button(onClick = { vm.katalogLaden() }, modifier = Modifier.padding(top = 8.dp)) { Text("Jetzt laden") }
+                }
+            } else {
+                OutlinedTextField(
+                    value = suche,
+                    onValueChange = { suche = it },
+                    label = { Text("Bei Hofer suchen") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+                    items(treffer, key = { it.url }) { p ->
+                        val gewaehlt = aktuell?.produkt?.url == p.url
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { vm.preisWaehlen(item, p); onClose() }
+                                .padding(vertical = 4.dp),
+                        ) {
+                            RadioButton(selected = gewaehlt, onClick = { vm.preisWaehlen(item, p); onClose() })
+                            Column(Modifier.weight(1f)) {
+                                Text(p.name, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOf(p.marke, p.groesse, p.grundpreis).filter { it.isNotBlank() }.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = cs.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Text(euro(p.preis), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                    if (treffer.isEmpty()) {
+                        item {
+                            Text(
+                                "Nichts gefunden. Probier ein anderes Wort, z. B. „Vollmilch“ statt „Milch“.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { vm.preisWaehlen(item, null); onClose() }, modifier = Modifier.weight(1f)) { Text("Ohne Preis") }
+                    if (vm.hatEigeneWahl(item)) {
+                        OutlinedButton(onClick = { vm.preisAutomatisch(item); onClose() }, modifier = Modifier.weight(1f)) { Text("Automatisch") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun GruppenTitel(titel: String, farbe: Color?, modifier: Modifier = Modifier) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         if (farbe != null) {
@@ -512,13 +662,22 @@ private fun Karte(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Gruppe(titel: String, farbe: Color, items: List<Item>, onToggle: (Item) -> Unit, onDelete: (Item) -> Unit, onLongPress: (Item) -> Unit) {
+private fun Gruppe(
+    titel: String,
+    farbe: Color,
+    items: List<Item>,
+    onToggle: (Item) -> Unit,
+    onDelete: (Item) -> Unit,
+    onLongPress: (Item) -> Unit,
+    preis: (Item) -> Preisinfo?,
+    onPreis: (Item) -> Unit,
+) {
     Column(Modifier.padding(top = 14.dp)) {
         GruppenTitel(titel, farbe, Modifier.padding(start = 4.dp, bottom = 6.dp))
         Karte {
             items.forEachIndexed { i, it ->
                 if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ItemRow(it, onToggle = { onToggle(it) }, onDelete = { onDelete(it) }, onLongPress = { onLongPress(it) })
+                ItemRow(it, onToggle = { onToggle(it) }, onDelete = { onDelete(it) }, onLongPress = { onLongPress(it) }, preis = preis(it), onPreis = { onPreis(it) })
             }
         }
     }
@@ -526,7 +685,14 @@ private fun Gruppe(titel: String, farbe: Color, items: List<Item>, onToggle: (It
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> Unit, onLongPress: () -> Unit = {}) {
+private fun ItemRow(
+    item: Item,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+    onLongPress: () -> Unit = {},
+    preis: Preisinfo? = null,
+    onPreis: () -> Unit = {},
+) {
     val cs = MaterialTheme.colorScheme
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -571,6 +737,39 @@ private fun ItemRow(item: Item, onToggle: () -> Unit, onDelete: () -> Unit, onLo
             }
             if (item.menge.isNotBlank()) {
                 Text(item.menge, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+            }
+            if (preis != null && !item.done) {
+                Text(
+                    (if (preis.sicher) "" else "≈ ") + preis.produkt.anzeige +
+                        (if (preis.produkt.groesse.isNotBlank()) " · ${preis.produkt.groesse}" else ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (preis != null) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onPreis)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    euro(preis.summe),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (item.done) cs.onSurfaceVariant else cs.primary,
+                )
+                if (preis.anzahl > 1) {
+                    Text("${preis.anzahl} × ${euro(preis.produkt.preis)}", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                }
+            }
+        } else if (!item.done) {
+            TextButton(onClick = onPreis, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text("€ ?", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
             }
         }
         IconButton(onClick = onDelete) {
@@ -903,6 +1102,50 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             SchluesselFeld("Gemini-API-Schlüssel", keyText) { keyText = it; vm.updateApiKey(it) }
             TestZeile(vm.testLaeuft, keyText.isNotBlank(), vm.testErgebnis) { vm.testKey() }
+
+            // ---------- Hofer-Preise ----------
+            Spacer(Modifier.height(24.dp))
+            Text("Hofer-Preise", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Preise anzeigen", fontWeight = FontWeight.Medium)
+                    Text(
+                        "Die App lädt das Hofer-Sortiment von hofer.at und zeigt zu jedem Artikel den Preis und die Summe.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = vm.preiseAn, onCheckedChange = { vm.updatePreiseAn(it) })
+            }
+            if (vm.preiseAn) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (vm.katalogAnzahl > 0) {
+                        val datum = java.text.SimpleDateFormat("dd.MM.yyyy, HH:mm", java.util.Locale.GERMAN).format(java.util.Date(vm.katalogStand))
+                        "${vm.katalogAnzahl} Produkte · Stand $datum"
+                    } else "Noch nicht geladen",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = cs.primary,
+                )
+                vm.katalogText?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                }
+                if (vm.katalogLaeuft) {
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(progress = { vm.katalogFortschritt }, modifier = Modifier.fillMaxWidth())
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { vm.katalogLaden() }, enabled = !vm.katalogLaeuft) { Text("Jetzt aktualisieren") }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Wird automatisch einmal pro Woche aktualisiert. Aktionspreise und Obst/Gemüse nach Gewicht können abweichen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant,
+                )
+            }
 
             // ---------- Laufweg ----------
             Spacer(Modifier.height(24.dp))

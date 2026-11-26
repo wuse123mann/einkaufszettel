@@ -545,4 +545,142 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             testLaeuft = false
         }
     }
+
+    // ---------- Hofer-Preise ----------
+
+    private val hofer = HoferKatalog(app)
+
+    var preiseAn by mutableStateOf(store.preiseAn)
+        private set
+    var katalogAnzahl by mutableStateOf(hofer.produkte.size)
+        private set
+    var katalogStand by mutableStateOf(hofer.stand)
+        private set
+    var katalogLaeuft by mutableStateOf(false)
+        private set
+    var katalogText by mutableStateOf<String?>(null)
+        private set
+    var katalogFortschritt by mutableStateOf(0f)
+        private set
+
+    /** Wird bei jeder Änderung an Katalog oder Zuordnung erhöht, damit die Liste neu rechnet. */
+    private var preisVersion by mutableStateOf(0)
+    private var preisWahl: Map<String, String> = store.preisWahl
+    private val preisCache = HashMap<String, Preisinfo?>()
+
+    fun updatePreiseAn(v: Boolean) {
+        preiseAn = v
+        store.preiseAn = v
+        preisVersion++
+        if (v && hofer.produkte.isEmpty()) katalogLaden()
+    }
+
+    /** Beim Öffnen der App: Sortiment laden, wenn es fehlt oder älter als eine Woche ist. */
+    fun preiseBeimStart() {
+        if (!preiseAn || katalogLaeuft) return
+        val alt = System.currentTimeMillis() - hofer.stand > 7L * 24 * 3600 * 1000
+        if (hofer.produkte.isEmpty() || alt) katalogLaden()
+    }
+
+    fun katalogLaden() {
+        if (katalogLaeuft) return
+        katalogLaeuft = true
+        katalogFortschritt = 0f
+        katalogText = "Verbinde mit hofer.at …"
+        viewModelScope.launch {
+            try {
+                hofer.aktualisieren { text, anteil -> main.post { katalogText = text; katalogFortschritt = anteil } }
+                katalogAnzahl = hofer.produkte.size
+                katalogStand = hofer.stand
+                katalogText = null
+                preisCache.clear()
+                preisVersion++
+                meldung = "Hofer-Preise aktualisiert: ${hofer.produkte.size} Produkte"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: RecognitionException) {
+                katalogText = e.message
+            } catch (e: IOException) {
+                katalogText = Gemini.netzFehlerText(e)
+            } catch (e: Exception) {
+                katalogText = "Hofer-Preise konnten nicht geladen werden: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                katalogLaeuft = false
+            }
+        }
+    }
+
+    /** Hofer-Preis für einen Artikel (eigene Wahl, sonst beste automatische Zuordnung). */
+    fun preisFuer(item: Item): Preisinfo? {
+        @Suppress("UNUSED_VARIABLE") val v = preisVersion   // Abhängigkeit für die Oberfläche
+        if (!preiseAn || hofer.produkte.isEmpty()) return null
+        val key = "${item.name}|${item.kat}|${item.menge}"
+        if (preisCache.containsKey(key)) return preisCache[key]
+        val anzahl = anzahlAus(item.menge)
+        val wahl = preisWahl[schluessel(item.name)]
+        val info = when {
+            wahl == "" -> null
+            wahl != null -> hofer.produktZuUrl(wahl)?.let { Preisinfo(it, anzahl, sicher = true) } ?: automatisch(item, anzahl)
+            else -> automatisch(item, anzahl)
+        }
+        preisCache[key] = info
+        return info
+    }
+
+    private fun automatisch(item: Item, anzahl: Int): Preisinfo? =
+        hofer.kandidaten(suchbegriff(item.name), item.kat, 1).firstOrNull()?.let { Preisinfo(it, anzahl, sicher = false) }
+
+    fun kandidaten(suche: String, kat: String?): List<HoferProdukt> =
+        if (suche.isBlank()) emptyList() else hofer.kandidaten(suchbegriff(suche), kat, 40)
+
+    fun preisWaehlen(item: Item, produkt: HoferProdukt?) {
+        preisWahl = preisWahl + (schluessel(item.name) to (produkt?.url ?: ""))
+        store.preisWahl = preisWahl
+        preisCache.clear()
+        preisVersion++
+    }
+
+    /** Zuordnung wieder der App überlassen. */
+    fun preisAutomatisch(item: Item) {
+        preisWahl = preisWahl - schluessel(item.name)
+        store.preisWahl = preisWahl
+        preisCache.clear()
+        preisVersion++
+    }
+
+    fun hatEigeneWahl(item: Item): Boolean = preisWahl.containsKey(schluessel(item.name))
+
+    fun summe(liste: List<Item>): Pair<Double, Int> {
+        var s = 0.0
+        var n = 0
+        for (i in liste) preisFuer(i)?.let { s += it.summe; n++ }
+        return s to n
+    }
+}
+
+/** Häufige Listenwörter, für die eine allgemeinere Suche das übliche Produkt trifft. */
+private val SUCH_VORZUG = mapOf(
+    "milch" to "frische vollmilch",
+    "joghurt" to "naturjoghurt",
+    "zucker" to "kristallzucker",
+    "mehl" to "weizenmehl glatt",
+    "salz" to "speisesalz",
+    "eier" to "eier",
+    "butter" to "teebutter",
+    "obers" to "schlagobers",
+    "sahne" to "schlagobers",
+    "topfen" to "topfen",
+    "brot" to "mischbrot",
+)
+
+private fun suchbegriff(name: String): String {
+    val n = name.trim().lowercase()
+    return SUCH_VORZUG[n] ?: name
+}
+
+/** „2“, „2x“, „6 Stk“, „3 Dosen“ → Stückzahl; Gewichte und Volumen → 1. */
+internal fun anzahlAus(menge: String): Int {
+    val m = Regex("""^\s*(\d{1,2})\s*(x|×|stk\.?|stück|pkg\.?|pack|packung(en)?|dosen?|flaschen?|becher|gläser|glas|bund|kiste|kisten)?\s*$""", RegexOption.IGNORE_CASE)
+        .find(menge) ?: return 1
+    return m.groupValues[1].toIntOrNull()?.coerceIn(1, 50) ?: 1
 }

@@ -75,6 +75,20 @@ class Store(context: Context) {
         set(v) = prefs.edit().putString("reihenfolge", org.json.JSONArray(v).toString()).apply()
 
     /** Vom Nutzer festgelegte Abteilungen: Artikelname (klein) → Abteilung. */
+    var preiseAn: Boolean
+        get() = prefs.getBoolean("preiseAn", true)
+        set(v) = prefs.edit().putBoolean("preiseAn", v).apply()
+
+    /** Vom Nutzer gewählte Hofer-Produkte: Artikelname (klein) → Produkt-URL ("" = ohne Preis). */
+    var preisWahl: Map<String, String>
+        get() = try {
+            val o = org.json.JSONObject(prefs.getString("preisWahl", null) ?: "{}")
+            o.keys().asSequence().associateWith { o.getString(it) }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        set(v) = prefs.edit().putString("preisWahl", org.json.JSONObject(v).toString()).apply()
+
     var gelernteKategorien: Map<String, String>
         get() = try {
             val o = org.json.JSONObject(prefs.getString("gelernteKategorien", null) ?: "{}")
