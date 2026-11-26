@@ -11,8 +11,10 @@ jobs:
     steps:
       - name: Hofer-Adressen abfragen
         run: |
+          set +e
           UA='Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36'
           probe() {
+            rm -f /tmp/r; touch /tmp/r
             echo "=================== $1"
             curl -sS -L -A "$UA" -H 'Accept-Language: de-AT,de;q=0.9' -o /tmp/r -w 'HTTP %{http_code} | %{content_type} | %{size_download} B | %{url_effective}\n' "$1" || true
             head -c 1500 /tmp/r; echo
@@ -20,15 +22,15 @@ jobs:
             grep -oE '(https?:)?//[a-z0-9.-]*(api|search|algolia|product)[a-z0-9./_-]*' /tmp/r | sort -u | head -30
             grep -oE '"(price|priceValue|amount|sellingSize|pricePerUnit|amountRelevantDisplay|basePrice)[^,]{0,80}' /tmp/r | head -10
           }
-          probe "https://api.hofer.at/v3/product-search?currency=EUR&serviceType=walk-in&q=milch&limit=5&offset=0&sort=relevance"
-          probe "https://api.hofer.at/v3/product-search?currency=EUR&q=milch&limit=5"
           probe "https://www.hofer.at/produkt/happy-harvest-toastbrot-000000000000100778"
           probe "https://www.hofer.at/suche?q=milch"
           probe "https://www.hofer.at/de/suche.html?q=milch"
           probe "https://www.hofer.at/produkte"
           probe "https://api.aldi-sued.de/v3/product-search?currency=EUR&serviceType=walk-in&q=milch&limit=3&offset=0"
       - name: Eingebettete Daten der Produktseite
+        if: always()
         run: |
+          set +e
           UA='Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36'
           curl -sS -L -A "$UA" "https://www.hofer.at/produkt/happy-harvest-toastbrot-000000000000100778" -o /tmp/p.html || true
           echo "Groesse: $(wc -c < /tmp/p.html)"
